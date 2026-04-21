@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>はりねずみの星わたり - CVM Simulator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;700&display=swap');
+        
+        body {
+            font-family: 'M PLUS Rounded 1c', sans-serif;
+            background: #fdf6e3;
+            color: #5d4037;
+            overflow: hidden;
+            touch-action: manipulation;
+        }
+
+        .hedgehog {
+            font-size: 5rem;
+            transition: all 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            display: inline-block;
+            cursor: pointer;
+        }
+
+        .velocity-10 { animation: shake 0.1s infinite; }
+        @keyframes shake {
+            0% { transform: translate(0,0) rotate(0deg); }
+            25% { transform: translate(2px, 2px) rotate(5deg); }
+            50% { transform: translate(-2px, -2px) rotate(-5deg); }
+            75% { transform: translate(2px, -2px) rotate(5deg); }
+            100% { transform: translate(0,0) rotate(0deg); }
+        }
+
+        .status-card {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(8px);
+            border: 2px solid #e6ccb2;
+            border-radius: 20px;
+        }
+
+        .progress-bar {
+            height: 12px;
+            border-radius: 6px;
+            background: #eee;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: #9ccc65;
+            transition: width 0.3s ease;
+        }
+
+        .cycle-log {
+            max-height: 100px;
+            overflow-y: auto;
+            font-size: 0.8rem;
+        }
+
+        .star-bg {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: -1;
+            background: radial-gradient(circle at center, #fff9c4 0%, #fdf6e3 70%);
+            transition: background 2s ease;
+        }
+
+        .star-active {
+            background: radial-gradient(circle at center, #1a237e 0%, #000000 100%);
+        }
+
+        /* カスタムスライダー */
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+        input[type=range]:focus { outline: none; }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 8px; cursor: pointer;
+            background: #d7ccc8; border-radius: 4px;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            height: 24px; width: 24px; border-radius: 50%;
+            background: #8d6e63; cursor: pointer;
+            -webkit-appearance: none; margin-top: -8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+    </style>
+</head>
+<body class="flex flex-col h-screen p-4">
+
+    <div id="starField" class="star-bg"></div>
+
+    <!-- Header: Generation Info -->
+    <div class="flex justify-between items-center mb-4">
+        <div class="status-card px-4 py-2 shadow-sm">
+            <span class="text-sm font-bold">第 <span id="genText">1</span> 世代</span>
+        </div>
+        <div class="status-card px-4 py-2 shadow-sm">
+            <span class="text-xs">受け継がれた輝き: </span>
+            <span id="advantageText" class="font-bold text-orange-600">+0</span>
+        </div>
+    </div>
+
+    <!-- Main View -->
+    <div class="flex-grow flex flex-col justify-center items-center relative">
+        <div id="hedgehogContainer" class="text-center">
+            <div id="hedgehogEmoji" class="hedgehog">🦔</div>
+            <div id="statusBubble" class="mt-4 px-4 py-2 bg-white rounded-full shadow-md text-sm font-bold opacity-0 transition-opacity">
+                おなかいっぱい！
+            </div>
+        </div>
+        
+        <div id="deathOverlay" class="absolute inset-0 flex flex-col items-center justify-center hidden bg-black/60 rounded-3xl text-white p-6 text-center">
+            <div class="text-5xl mb-4">🌟</div>
+            <h2 class="text-2xl font-bold mb-2">一生を終えて星になりました</h2>
+            <p id="deathSummary" class="text-sm mb-6">たくさんの想い出が夜空を照らします。</p>
+            <button onclick="rebirth()" class="bg-yellow-400 text-brown-900 px-8 py-3 rounded-full font-bold text-lg shadow-lg active:scale-95 transition-transform">
+                次の子を迎える
+            </button>
+        </div>
+    </div>
+
+    <!-- UI Controls -->
+    <div class="status-card p-4 space-y-4 shadow-xl">
+        <!-- Stats -->
+        <div class="grid grid-cols-2 gap-4">
+            <div>
+                <label class="text-xs font-bold text-gray-500">いまの状態</label>
+                <div id="phaseText" class="text-lg font-bold text-brown-700">あかちゃん</div>
+            </div>
+            <div class="text-right">
+                <label class="text-xs font-bold text-gray-500">想い出の量 (L)</label>
+                <div id="accText" class="text-lg font-bold text-orange-600">0 / 100</div>
+            </div>
+        </div>
+
+        <!-- Progress Bar (L accumulation) -->
+        <div class="progress-bar">
+            <div id="accFill" class="progress-fill" style="width: 0%"></div>
+        </div>
+
+        <!-- Velocity Slider -->
+        <div>
+            <div class="flex justify-between items-center mb-1">
+                <label class="text-xs font-bold text-gray-500">元気のよさ (1-10)</label>
+                <span id="velDisplay" class="font-bold text-blue-600 text-lg">5</span>
+            </div>
+            <input type="range" id="velSlider" min="1" max="10" value="5">
+            <div class="flex justify-between text-[10px] text-gray-400 px-1">
+                <span>すやすや</span>
+                <span>ふつう</span>
+                <span>大はしゃぎ</span>
+            </div>
+        </div>
+
+        <!-- History/Log -->
+        <div id="log" class="cycle-log text-gray-400 italic">
+            <div>新しい物語がはじまりました。</div>
+        </div>
+    </div>
+
+    <script>
+        // --- CVM Logic Constants ---
+        const L_MAX_BASE = 1000;
+        const ADVANTAGE_COEFF = 0.5; // α = L_max(prev) / 2000 程度のイメージ
+
+        // --- Application State ---
+        let state = {
+            generation: 1,
+            phase: 'B', // B, G, M, D, X
+            velocity: 5,
+            accumulation: 0,
+            lMax: L_MAX_BASE,
+            vInit: 3,
+            advantage: 0,
+            isDead: false
+        };
+
+        const PHASES = {
+            'B': { label: 'あかちゃん', emoji: '👶', size: 0.6 },
+            'G': { label: 'わんぱく期', emoji: '🌿', size: 0.9 },
+            'M': { label: 'おとな', emoji: '🍎', size: 1.2 },
+            'D': { label: 'おじいちゃん', emoji: '🍂', size: 1.1 },
+            'X': { label: '星（ピーク）', emoji: '🌟', size: 1.5 }
+        };
+
+        const EMOJIS = ['🦔', '🦔', '🦔', '🦔', '✨'];
+
+        // --- DOM Elements ---
+        const elHedgehog = document.getElementById('hedgehogEmoji');
+        const elVelSlider = document.getElementById('velSlider');
+        const elVelDisplay = document.getElementById('velDisplay');
+        const elAccFill = document.getElementById('accFill');
+        const elAccText = document.getElementById('accText');
+        const elPhaseText = document.getElementById('phaseText');
+        const elGenText = document.getElementById('genText');
+        const elAdvantageText = document.getElementById('advantageText');
+        const elLog = document.getElementById('log');
+        const elDeathOverlay = document.getElementById('deathOverlay');
+        const elDeathSummary = document.getElementById('deathSummary');
+        const elStarField = document.getElementById('starField');
+        const elBubble = document.getElementById('statusBubble');
+
+        // --- Functions ---
+
+        function updateUI() {
+            const pInfo = PHASES[state.phase];
+            elPhaseText.innerText = pInfo.label;
+            elGenText.innerText = state.generation;
+            elAdvantageText.innerText = `+${state.advantage.toFixed(1)}`;
+            
+            // Emoji and Size
+            elHedgehog.style.transform = `scale(${pInfo.size})`;
+            if (state.phase === 'X') {
+                elHedgehog.innerText = '🌟';
+                elHedgehog.classList.add('velocity-10');
+            } else {
+                elHedgehog.innerText = '🦔';
+                elHedgehog.classList.remove('velocity-10');
+            }
+
+            // Progress
+            const progress = (state.accumulation / state.lMax) * 100;
+            elAccFill.style.width = `${Math.min(100, progress)}%`;
+            elAccText.innerText = `${Math.floor(state.accumulation)} / ${state.lMax}`;
+
+            // Slider
+            if (state.phase === 'X') {
+                elVelSlider.disabled = true;
+                elVelSlider.value = 10;
+                elVelDisplay.innerText = "10 (最高！)";
+            } else {
+                elVelSlider.disabled = false;
+                elVelDisplay.innerText = state.velocity;
+            }
+        }
+
+        function addLog(msg) {
+            const div = document.createElement('div');
+            div.innerText = `> ${msg}`;
+            elLog.prepend(div);
+        }
+
+        function showBubble(text) {
+            elBubble.innerText = text;
+            elBubble.style.opacity = 1;
+            setTimeout(() => { elBubble.style.opacity = 0; }, 2000);
+        }
+
+        // Core Tick Logic
+        function tick() {
+            if (state.isDead) return;
+
+            // 1. Update Accumulation: L(t+1) = L(t) + f(V(t))
+            // 元気の良さ(V)が高いほど想い出(L)が早く貯まる
+            state.accumulation += (state.velocity * 1.5);
+
+            // 2. State Transition Management
+            const progress = state.accumulation / state.lMax;
+            let nextPhase = state.phase;
+
+            if (progress < 0.15) nextPhase = 'B';
+            else if (progress < 0.45) nextPhase = 'G';
+            else if (progress < 0.75) nextPhase = 'M';
+            else if (progress < 0.95) nextPhase = 'D';
+            else nextPhase = 'X';
+
+            if (nextPhase !== state.phase) {
+                state.phase = nextPhase;
+                if (state.phase === 'X') {
+                    state.velocity = 10;
+                    triggerDeath();
+                }
+                addLog(`${PHASES[state.phase].label}になりました`);
+            }
+
+            // 3. Death Condition: L >= L_max
+            if (state.accumulation >= state.lMax) {
+                // Finalizing
+                state.isDead = true;
+                showDeathScreen();
+            }
+
+            updateUI();
+        }
+
+        function triggerDeath() {
+            elStarField.classList.add('star-active');
+            addLog("命の輝きが最大になりました！");
+        }
+
+        function showDeathScreen() {
+            elDeathSummary.innerText = `今回の「想い出」の量: ${Math.floor(state.accumulation)}\nこの輝きが、次の世代の力になります。`;
+            elDeathOverlay.classList.remove('hidden');
+        }
+
+        function rebirth() {
+            // CVM Advantage Inheritance: V_init(next) = V_init(current) + α
+            // 想い出の多さに比例して、次世代の初期ベロシティ(活発さ)が上がる
+            const alpha = (state.accumulation / 500); // 1000貯まると+2
+            
+            state.generation++;
+            state.advantage += alpha;
+            state.vInit = Math.min(8, 3 + state.advantage); // 最大8からスタート可能
+            
+            // Reset core params
+            state.phase = 'B';
+            state.accumulation = 0;
+            state.velocity = Math.round(state.vInit);
+            state.isDead = false;
+            state.lMax = L_MAX_BASE + (state.generation * 100); // 世代ごとに器が少し大きくなる
+
+            // UI Reset
+            elVelSlider.value = state.velocity;
+            elDeathOverlay.classList.add('hidden');
+            elStarField.classList.remove('star-active');
+            addLog(`第 ${state.generation} 世代の物語がはじまりました`);
+            updateUI();
+        }
+
+        // --- Interaction ---
+        elVelSlider.addEventListener('input', (e) => {
+            state.velocity = parseInt(e.target.value);
+            updateUI();
+        });
+
+        elHedgehog.addEventListener('click', () => {
+            if (state.isDead) return;
+            // Manual boost (Micro-activity)
+            state.accumulation += 5;
+            showBubble(["きゅ～！", "るんるん", "おさんぽ！", "たのしい！"][Math.floor(Math.random()*4)]);
+            updateUI();
+        });
+
+        // Loop
+        setInterval(tick, 200);
+
+        // Init
+        updateUI();
+
+    </script>
+</body>
+</html>
