@@ -110,7 +110,7 @@
             font-weight: bold;
             cursor: pointer;
             box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-            outline: none; /* フォーカス枠を消す */
+            outline: none;
         }
         button:active { transform: scale(0.96); }
         button.btn-alt { background: #6366f1; }
@@ -208,6 +208,7 @@
         
         <div class="controls">
             <button class="btn-alt" onclick="app.toggleCameraMode()">📸 カメラ切替 (F)</button>
+            <button onclick="app.resetCamera()">🏠 カメラをリセット</button>
             <button onclick="app.addBalls(500)">➕ ボール追加 (500)</button>
             <button class="btn-danger" onclick="app.clearBalls()">🗑️ おかたづけ</button>
         </div>
@@ -413,6 +414,9 @@ class App {
         this.moveVector = new THREE.Vector3(0,0,0);
         this.uiVisible = true;
         
+        // 初期カメラ設定値
+        this.initialCamPos = new THREE.Vector3(0, 50, 120);
+
         this.yaw = 0;
         this.pitch = 0;
         this.pointerPos = { x: 0, y: 0 };
@@ -431,7 +435,7 @@ class App {
         this.scene.fog = new THREE.Fog(0x87CEEB, 60, 220);
 
         this.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
-        this.camera.position.set(0, 50, 120);
+        this.camera.position.copy(this.initialCamPos);
         this.camera.lookAt(0, 0, 0);
 
         this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -483,7 +487,6 @@ class App {
     initControls() {
         window.addEventListener('keydown', (e) => {
             this.keys[e.code] = true;
-            // スペースキー押下時に、もしボタンにフォーカスがあれば外す（重複防止）
             if (e.code === 'Space' && document.activeElement instanceof HTMLButtonElement) {
                 document.activeElement.blur();
             }
@@ -589,7 +592,6 @@ class App {
     }
 
     toggleCameraMode() {
-        // ボタンにフォーカスがあれば外す (スペースキー誤爆防止の核心)
         if (document.activeElement instanceof HTMLButtonElement) {
             document.activeElement.blur();
         }
@@ -615,6 +617,28 @@ class App {
             joystick.style.display = 'none';
             heightCtrls.style.display = 'none';
             guide.innerText = '📸 [F]でフリーモード切替 / 👆タップ:衝撃波';
+        }
+    }
+
+    resetCamera() {
+        if (document.activeElement instanceof HTMLButtonElement) {
+            document.activeElement.blur();
+        }
+
+        this.camera.position.copy(this.initialCamPos);
+        this.camera.lookAt(0, 0, 0);
+
+        // フリーモード用パラメータもリセット
+        const euler = new THREE.Euler().setFromQuaternion(this.camera.quaternion, 'YXZ');
+        this.yaw = euler.y;
+        this.pitch = euler.x;
+        
+        // 慣性をリセット
+        this.moveVector.set(0, 0, 0);
+
+        if (this.cameraMode === 'fixed') {
+            this.orbitControls.reset();
+            this.orbitControls.enabled = false;
         }
     }
 
