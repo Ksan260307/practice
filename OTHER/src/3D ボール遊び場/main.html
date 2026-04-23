@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>3D ボール遊び場</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        :root {
+            --primary: #4f46e5;
+            --primary-hover: #4338ca;
+            --bg-panel: rgba(255, 255, 255, 0.85);
+            --text-main: #333;
+        }
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #87CEEB;
+            font-family: 'Hiragino Kaku Gothic ProN', 'Meiryo', sans-serif;
+            touch-action: none;
+        }
+        
+        #ui-toggle-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 44px;
+            height: 44px;
+            background: var(--bg-panel);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            cursor: pointer;
+            z-index: 20;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+            user-select: none;
+            backdrop-filter: blur(5px);
+            transition: transform 0.2s;
+        }
+        #ui-toggle-btn:active { transform: scale(0.9); }
+
+        #ui-container {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            pointer-events: none;
+            z-index: 10;
+            transition: opacity 0.3s;
+        }
+
+        .panel {
+            background: var(--bg-panel);
+            padding: 15px 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+            pointer-events: auto;
+            min-width: 200px;
+            backdrop-filter: blur(5px);
+        }
+
+        h1 {
+            margin: 0 0 10px 0;
+            font-size: 16px;
+            color: var(--text-main);
+            border-bottom: 2px solid #ddd;
+            padding-bottom: 8px;
+        }
+
+        .status-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+            font-size: 13px;
+            font-weight: bold;
+            color: #555;
+        }
+
+        .value-badge {
+            background: #f3f4f6;
+            padding: 4px 8px;
+            border-radius: 6px;
+            color: var(--primary);
+        }
+
+        .perf-good { color: #10b981; font-weight: bold;}
+        .perf-ok { color: #f59e0b; font-weight: bold;}
+        .perf-bad { color: #ef4444; font-weight: bold;}
+
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        button {
+            width: 100%;
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s, transform 0.1s;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+
+        button:hover { background: var(--primary-hover); }
+        button:active { transform: scale(0.96); }
+        button.btn-danger { background: #ef4444; }
+
+        /* カメラ上下移動コントロール */
+        #camera-controls {
+            position: absolute;
+            right: 20px;
+            bottom: 30px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            z-index: 10;
+            transition: opacity 0.3s;
+        }
+
+        #camera-controls button {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.9);
+            color: #333;
+            font-size: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        
+        #camera-controls button:active {
+            background: #e5e7eb;
+            transform: scale(0.9);
+        }
+
+        #guide {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.6);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 13px;
+            text-align: center;
+            pointer-events: none;
+            backdrop-filter: blur(4px);
+            white-space: nowrap;
+            z-index: 10;
+            transition: opacity 0.3s;
+        }
+
+        @media (max-width: 600px) {
+            #ui-container { top: 10px; left: 10px; right: 10px; }
+            #ui-toggle-btn { top: 10px; right: 10px; width: 40px; height: 40px; font-size: 18px; }
+            #camera-controls { right: 10px; bottom: 20px; gap: 10px; }
+            #camera-controls button { width: 44px; height: 44px; font-size: 16px; }
+            #guide { bottom: 20px; font-size: 11px; padding: 6px 12px; left: 40%; transform: translateX(-50%);}
+        }
+    </style>
+</head>
+<body>
+
+<div id="ui-toggle-btn" onclick="app.toggleUI()" title="UIの表示/非表示">👁️</div>
+
+<div id="ui-container">
+    <div class="panel">
+        <h1>🟢 ボール遊び場</h1>
+        
+        <div class="status-row">
+            <span>ボールの数:</span>
+            <span id="ui-count" class="value-badge">0 / 10000</span>
+        </div>
+        
+        <div class="status-row">
+            <span>システムの調子:</span>
+            <span id="ui-perf" class="perf-good">とても良い</span>
+        </div>
+        
+        <div class="controls">
+            <!-- 10000個上限に合わせて、一気に追加する数を増やしました -->
+            <button onclick="app.addBalls(500)">➕ ボールを追加 (500個)</button>
+            <button class="btn-danger" onclick="app.clearBalls()">🗑️ おかたづけ</button>
+        </div>
+    </div>
+</div>
+
+<div id="camera-controls">
+    <button onmousedown="app.moveCamera(1)" onmouseup="app.stopCamera()" onmouseleave="app.stopCamera()" ontouchstart="app.moveCamera(1)" ontouchend="app.stopCamera()">🔼</button>
+    <button onmousedown="app.moveCamera(-1)" onmouseup="app.stopCamera()" onmouseleave="app.stopCamera()" ontouchstart="app.moveCamera(-1)" ontouchend="app.stopCamera()">🔽</button>
+</div>
+
+<div id="guide">
+    👆 画面タップで衝撃波 / 🔼🔽で視点上下
+</div>
+
+<script>
+/**
+ * UCD-F 準拠 物理エンジン (上限1万個最適化版)
+ */
+class PhysicsEngine {
+    constructor(maxCapacity = 10000) {
+        this.max = maxCapacity;
+        this.activeCount = 0;
+        this.radius = 1.0;
+        this.boxSize = 40; 
+        
+        // メモリの連続性を保つSoA構造
+        this.state = {
+            px: new Float32Array(this.max), py: new Float32Array(this.max), pz: new Float32Array(this.max),
+            vx: new Float32Array(this.max), vy: new Float32Array(this.max), vz: new Float32Array(this.max),
+            colorId: new Float32Array(this.max),
+            active: new Uint8Array(this.max),
+            phase: new Float32Array(this.max),
+            flash: new Float32Array(this.max)
+        };
+
+        this.fixedDt = 1 / 60; 
+        
+        this.baseGravity = 40.0; 
+        this.gx = 0; this.gy = -this.baseGravity; this.gz = 0;
+        
+        this.bounce = 0.85;      
+        this.friction = 0.99;   
+        this.ballBounce = 0.9;   
+        this.airDrag = 0.999;    
+
+        this.cellSize = 2.5; 
+        this.gridRes = Math.ceil((this.boxSize * 2) / this.cellSize); 
+        const totalCells = this.gridRes * this.gridRes * this.gridRes;
+        
+        this.head = new Int32Array(totalCells).fill(-1);
+        this.next = new Int32Array(this.max).fill(-1);
+    }
+
+    applyImpulse(cx, cy, cz, power, blastRadius) {
+        const radiusSq = blastRadius * blastRadius;
+        for (let i = 0; i < this.max; i++) {
+            if (this.state.active[i] === 0) continue;
+            
+            const dx = this.state.px[i] - cx;
+            const dy = this.state.py[i] - cy;
+            const dz = this.state.pz[i] - cz;
+            const distSq = dx*dx + dy*dy + dz*dz;
+            
+            if (distSq < radiusSq) {
+                const dist = Math.sqrt(distSq) || 0.1; 
+                const force = (1.0 - dist / blastRadius) * power;
+                
+                this.state.vx[i] += (dx / dist) * force;
+                this.state.vy[i] += (dy / dist) * force + force * 0.3;
+                this.state.vz[i] += (dz / dist) * force;
+                
+                this.state.flash[i] = 1.0; 
+                this.state.phase[i] = 0; 
+            }
+        }
+    }
+
+    spawnFloating(count, originX, originY, originZ) {
+        let spawned = 0;
+        for (let i = 0; i < this.max && spawned < count; i++) {
+            if (this.state.active[i] === 0) {
+                this.state.px[i] = originX + (Math.random() - 0.5) * 6;
+                this.state.py[i] = originY + (Math.random() - 0.5) * 6;
+                this.state.pz[i] = originZ + (Math.random() - 0.5) * 6;
+                
+                this.state.vx[i] = (Math.random() - 0.5) * 3;
+                this.state.vy[i] = 5 + Math.random() * 8; 
+                this.state.vz[i] = (Math.random() - 0.5) * 3;
+                
+                this.state.colorId[i] = Math.random();
+                this.state.active[i] = 1;
+                this.state.phase[i] = 0.4 + Math.random() * 0.4; 
+                this.state.flash[i] = 0;
+                
+                spawned++;
+                this.activeCount++;
+            }
+        }
+    }
+
+    clearAll() {
+        this.state.active.fill(0);
+        this.activeCount = 0;
+    }
+
+    step() {
+        const dt = this.fixedDt;
+        const radius = this.radius;
+        const box = this.boxSize;
+        const diameterSq = (radius * 2) * (radius * 2);
+
+        this.head.fill(-1);
+        let currentActive = 0;
+
+        for (let i = 0; i < this.max; i++) {
+            if (this.state.active[i] === 0) continue;
+            currentActive++;
+
+            if (this.state.phase[i] > 0) {
+                this.state.phase[i] -= dt;
+                this.state.vx[i] *= 0.95; this.state.vy[i] *= 0.96; this.state.vz[i] *= 0.95;
+            } else {
+                this.state.vx[i] = this.state.vx[i] * this.airDrag + this.gx * dt;
+                this.state.vy[i] = this.state.vy[i] * this.airDrag + this.gy * dt;
+                this.state.vz[i] = this.state.vz[i] * this.airDrag + this.gz * dt;
+            }
+
+            if (this.state.flash[i] > 0) {
+                this.state.flash[i] = Math.max(0, this.state.flash[i] - dt * 3.0);
+            }
+
+            this.state.px[i] += this.state.vx[i] * dt;
+            this.state.py[i] += this.state.vy[i] * dt;
+            this.state.pz[i] += this.state.vz[i] * dt;
+
+            const applyBounce = (axis, sign, limit, vAxis) => {
+                const isHit = sign > 0 ? this.state[axis][i] > limit : this.state[axis][i] < limit;
+                if (isHit) {
+                    this.state[axis][i] = limit; 
+                    const v = this.state[vAxis][i];
+                    if ((sign > 0 && v > 0) || (sign < 0 && v < 0)) {
+                        this.state[vAxis][i] = -v * this.bounce;
+                        if (Math.abs(v) > 8.0) this.state.flash[i] = Math.min(1.0, this.state.flash[i] + 0.3);
+                        
+                        const f = this.friction;
+                        if (vAxis === 'vx') { this.state.vy[i] *= f; this.state.vz[i] *= f; }
+                        else if (vAxis === 'vy') { this.state.vx[i] *= f; this.state.vz[i] *= f; }
+                        else { this.state.vx[i] *= f; this.state.vy[i] *= f; }
+                    }
+                }
+            };
+
+            applyBounce('px', 1, box - radius, 'vx'); applyBounce('px', -1, -box + radius, 'vx');
+            applyBounce('py', 1, box * 2, 'vy');      applyBounce('py', -1, -box + radius, 'vy'); 
+            applyBounce('pz', 1, box - radius, 'vz'); applyBounce('pz', -1, -box + radius, 'vz');
+
+            const cx = Math.floor((this.state.px[i] + box) / this.cellSize);
+            const cy = Math.floor((this.state.py[i] + box) / this.cellSize);
+            const cz = Math.floor((this.state.pz[i] + box) / this.cellSize);
+
+            if (cx >= 0 && cx < this.gridRes && cy >= 0 && cy < this.gridRes && cz >= 0 && cz < this.gridRes) {
+                const hash = cx + cy * this.gridRes + cz * this.gridRes * this.gridRes;
+                this.next[i] = this.head[hash];
+                this.head[hash] = i;
+            }
+        }
+        
+        for (let i = 0; i < this.max; i++) {
+            if (this.state.active[i] === 0) continue;
+
+            const cx = Math.floor((this.state.px[i] + box) / this.cellSize);
+            const cy = Math.floor((this.state.py[i] + box) / this.cellSize);
+            const cz = Math.floor((this.state.pz[i] + box) / this.cellSize);
+
+            for (let ox = -1; ox <= 1; ox++) {
+                for (let oy = -1; oy <= 1; oy++) {
+                    for (let oz = -1; oz <= 1; oz++) {
+                        const nx = cx + ox; const ny = cy + oy; const nz = cz + oz;
+
+                        if (nx >= 0 && nx < this.gridRes && ny >= 0 && ny < this.gridRes && nz >= 0 && nz < this.gridRes) {
+                            const hash = nx + ny * this.gridRes + nz * this.gridRes * this.gridRes;
+                            let j = this.head[hash];
+
+                            while (j !== -1) {
+                                if (i < j) { 
+                                    const dx = this.state.px[i] - this.state.px[j];
+                                    const dy = this.state.py[i] - this.state.py[j];
+                                    const dz = this.state.pz[i] - this.state.pz[j];
+                                    const distSq = dx*dx + dy*dy + dz*dz;
+
+                                    if (distSq > 0.0001 && distSq < diameterSq) {
+                                        const dist = Math.sqrt(distSq);
+                                        const overlap = (radius * 2.0) - dist;
+                                        
+                                        const nx_norm = dx / dist; const ny_norm = dy / dist; const nz_norm = dz / dist;
+
+                                        const correction = overlap * 0.51; 
+                                        this.state.px[i] += nx_norm * correction; this.state.py[i] += ny_norm * correction; this.state.pz[i] += nz_norm * correction;
+                                        this.state.px[j] -= nx_norm * correction; this.state.py[j] -= ny_norm * correction; this.state.pz[j] -= nz_norm * correction;
+
+                                        const rvx = this.state.vx[i] - this.state.vx[j];
+                                        const rvy = this.state.vy[i] - this.state.vy[j];
+                                        const rvz = this.state.vz[i] - this.state.vz[j];
+                                        const velAlongNormal = rvx * nx_norm + rvy * ny_norm + rvz * nz_norm;
+
+                                        if (velAlongNormal < 0) { 
+                                            const jImpulse = -(1 + this.ballBounce) * velAlongNormal / 2;
+                                            this.state.vx[i] += jImpulse * nx_norm; this.state.vy[i] += jImpulse * ny_norm; this.state.vz[i] += jImpulse * nz_norm;
+                                            this.state.vx[j] -= jImpulse * nx_norm; this.state.vy[j] -= jImpulse * ny_norm; this.state.vz[j] -= jImpulse * nz_norm;
+                                            
+                                            const impact = Math.min(1.0, Math.abs(velAlongNormal) * 0.1);
+                                            if (impact > 0.1) {
+                                                this.state.flash[i] = Math.max(this.state.flash[i], impact);
+                                                this.state.flash[j] = Math.max(this.state.flash[j], impact);
+                                            }
+                                        }
+                                    }
+                                }
+                                j = this.next[j];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        this.activeCount = currentActive;
+    }
+}
+
+// --- 描画・操作エンジン ---
+class App {
+    constructor() {
+        this.physics = new PhysicsEngine(10000); // 上限10000個に設定
+        this.colorPalette = [
+            new THREE.Color('#ef4444'), new THREE.Color('#3b82f6'), 
+            new THREE.Color('#10b981'), new THREE.Color('#f59e0b'), 
+            new THREE.Color('#8b5cf6'), new THREE.Color('#ec4899')
+        ];
+        this.whiteColor = new THREE.Color(0xffffff);
+        this.dummyObj = new THREE.Object3D();
+        
+        this.raycaster = new THREE.Raycaster();
+        this.mouse = new THREE.Vector2();
+
+        this.uiVisible = true;
+        this.cameraMoveDir = 0; // -1: 下へ, 1: 上へ
+        
+        // パフォーマンス計測用
+        this.frameCount = 0;
+        this.lastFpsTime = performance.now();
+
+        this.initThree();
+        this.bindEvents();
+        
+        this.lastTime = performance.now();
+        this.accumulator = 0;
+        this.animate();
+    }
+
+    initThree() {
+        this.scene = new THREE.Scene();
+        this.scene.background = new THREE.Color(0x87CEEB);
+        this.scene.fog = new THREE.Fog(0x87CEEB, 50, 150);
+
+        this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 200);
+        this.camera.position.set(0, 30, 90); 
+
+        this.renderer = new THREE.WebGLRenderer({ antialias: true });
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        document.body.appendChild(this.renderer.domElement);
+
+        this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
+        this.controls.enableDamping = true;
+        this.controls.dampingFactor = 0.05;
+        // 地下に潜れるように制限を解除 (床下から見上げることも可能に)
+        // this.controls.maxPolarAngle = Math.PI / 2 - 0.05; 
+        this.controls.minDistance = 20;
+        this.controls.maxDistance = 200;
+
+        this.scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(20, 50, 20);
+        dirLight.castShadow = true;
+        dirLight.shadow.camera.top = 50; dirLight.shadow.camera.bottom = -50;
+        dirLight.shadow.camera.left = -50; dirLight.shadow.camera.right = 50;
+        this.scene.add(dirLight);
+
+        // --- 床とグリッド ---
+        const floorGeo = new THREE.PlaneGeometry(80, 80);
+        // 床下からも見えるように DoubleSide に設定
+        const floorMat = new THREE.MeshStandardMaterial({ color: 0xe5e7eb, roughness: 0.8, side: THREE.DoubleSide });
+        this.floor = new THREE.Mesh(floorGeo, floorMat);
+        this.floor.rotation.x = -Math.PI / 2;
+        this.floor.position.y = -40; 
+        this.floor.receiveShadow = true;
+        this.scene.add(this.floor);
+
+        const grid = new THREE.GridHelper(80, 8, 0x000000, 0x000000);
+        grid.material.opacity = 0.1; grid.material.transparent = true; grid.position.y = -39.9;
+        this.scene.add(grid);
+
+        // --- ボール群 ---
+        const isMobile = window.innerWidth < 600;
+        // 1万個対応のため、ポリゴン数を少し減らしてGPU負荷を抑える
+        const sphereGeo = new THREE.SphereGeometry(this.physics.radius, isMobile ? 6 : 8, isMobile ? 6 : 8);
+        const sphereMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.2 });
+        
+        this.instancedMesh = new THREE.InstancedMesh(sphereGeo, sphereMat, this.physics.max);
+        this.instancedMesh.castShadow = true; this.instancedMesh.receiveShadow = true;
+        
+        this.dummyObj.position.set(0, -999, 0);
+        this.dummyObj.updateMatrix();
+        for (let i = 0; i < this.physics.max; i++) {
+            this.instancedMesh.setMatrixAt(i, this.dummyObj.matrix);
+            this.instancedMesh.setColorAt(i, this.whiteColor);
+        }
+        this.scene.add(this.instancedMesh);
+    }
+
+    bindEvents() {
+        window.addEventListener('resize', () => {
+            this.camera.aspect = window.innerWidth / window.innerHeight;
+            this.camera.updateProjectionMatrix();
+            this.renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        let pointerDownPos = { x: 0, y: 0 };
+        let isDragging = false;
+
+        window.addEventListener('pointerdown', (e) => {
+            pointerDownPos = { x: e.clientX, y: e.clientY };
+            isDragging = false;
+        });
+
+        window.addEventListener('pointermove', (e) => {
+            if (Math.abs(e.clientX - pointerDownPos.x) > 5 || Math.abs(e.clientY - pointerDownPos.y) > 5) {
+                isDragging = true;
+            }
+        });
+
+        window.addEventListener('pointerup', (e) => {
+            const elem = document.elementFromPoint(e.clientX, e.clientY);
+            // UI上のクリックや、カメラ操作ボタンのクリックは無視する
+            if (elem && (elem.tagName === 'BUTTON' || elem.closest('#ui-container') || elem.closest('#camera-controls') || elem.id === 'ui-toggle-btn')) return;
+
+            if (!isDragging) {
+                this.mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+                this.mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+                this.raycaster.setFromCamera(this.mouse, this.camera);
+
+                const intersects = this.raycaster.intersectObject(this.floor);
+                let targetPos;
+
+                if (intersects.length > 0) {
+                    targetPos = intersects[0].point;
+                } else {
+                    const dir = this.raycaster.ray.direction;
+                    targetPos = new THREE.Vector3().copy(this.camera.position).add(dir.multiplyScalar(80));
+                }
+
+                this.physics.applyImpulse(targetPos.x, targetPos.y, targetPos.z, 60, 40);
+            }
+        });
+    }
+
+    // カメラの上下移動ロジック
+    moveCamera(dir) {
+        this.cameraMoveDir = dir;
+    }
+
+    stopCamera() {
+        this.cameraMoveDir = 0;
+    }
+
+    // ボタンから呼び出されるロジック
+    addBalls(count) {
+        this.physics.spawnFloating(count, 0, 30, 0);
+        this.updateUI(); // 数を即座に更新
+    }
+
+    clearBalls() {
+        this.physics.clearAll();
+        this.updateUI(); // 数を即座に更新
+    }
+
+    // ボール数のUI更新
+    updateUI() {
+        if (this.uiVisible) {
+            document.getElementById('ui-count').innerText = `${this.physics.activeCount} / ${this.physics.max}`;
+        }
+    }
+
+    // パフォーマンス(調子)のUI更新
+    updatePerformanceUI(fps) {
+        if (!this.uiVisible) return;
+        const el = document.getElementById('ui-perf');
+        if (fps >= 50) {
+            el.innerText = 'とても良い';
+            el.className = 'perf-good';
+        } else if (fps >= 30) {
+            el.innerText = '普通（少し重い）';
+            el.className = 'perf-ok';
+        } else {
+            el.innerText = 'ボールが多すぎます';
+            el.className = 'perf-bad';
+        }
+    }
+
+    toggleUI() {
+        this.uiVisible = !this.uiVisible;
+        const container = document.getElementById('ui-container');
+        const guide = document.getElementById('guide');
+        const cameraCtrl = document.getElementById('camera-controls');
+        const btn = document.getElementById('ui-toggle-btn');
+        
+        if (this.uiVisible) {
+            container.style.opacity = '1';
+            container.style.pointerEvents = 'auto';
+            guide.style.opacity = '1';
+            cameraCtrl.style.opacity = '1';
+            cameraCtrl.style.pointerEvents = 'auto';
+            btn.innerText = '👁️';
+            this.updateUI(); // 表示した際に最新の数にする
+        } else {
+            container.style.opacity = '0';
+            container.style.pointerEvents = 'none';
+            guide.style.opacity = '0';
+            cameraCtrl.style.opacity = '0';
+            cameraCtrl.style.pointerEvents = 'none';
+            btn.innerText = '🙈';
+        }
+    }
+
+    animate() {
+        requestAnimationFrame(() => this.animate());
+
+        const now = performance.now();
+        let dt = (now - this.lastTime) / 1000;
+        if (dt > 0.1) dt = 0.1;
+        this.lastTime = now;
+
+        // カメラの上下移動（パン）の処理
+        if (this.cameraMoveDir !== 0) {
+            const speed = 1.0;
+            const nextY = this.controls.target.y + this.cameraMoveDir * speed;
+            // 上下の限界を設定（箱の下〜上まで）
+            if (nextY >= -50 && nextY <= 50) {
+                this.camera.position.y += this.cameraMoveDir * speed;
+                this.controls.target.y = nextY;
+            }
+        }
+
+        this.controls.update();
+
+        this.accumulator += dt;
+        while (this.accumulator >= this.physics.fixedDt) {
+            this.physics.step();
+            this.accumulator -= this.physics.fixedDt;
+        }
+
+        // FPSと定期UI更新処理
+        this.frameCount++;
+        if (now - this.lastFpsTime >= 1000) {
+            this.updatePerformanceUI(this.frameCount);
+            this.updateUI(); // 1秒ごとに数も正確に同期
+            this.frameCount = 0;
+            this.lastFpsTime = now;
+        }
+
+        for (let i = 0; i < this.physics.max; i++) {
+            if (this.physics.state.active[i] === 1) {
+                this.dummyObj.position.set(this.physics.state.px[i], this.physics.state.py[i], this.physics.state.pz[i]);
+                this.dummyObj.updateMatrix();
+                this.instancedMesh.setMatrixAt(i, this.dummyObj.matrix);
+                
+                const baseColor = this.colorPalette[Math.floor(this.physics.state.colorId[i] * this.colorPalette.length)];
+                if (this.physics.state.flash[i] > 0.05) {
+                    this.instancedMesh.setColorAt(i, baseColor.clone().lerp(this.whiteColor, this.physics.state.flash[i]));
+                } else {
+                    this.instancedMesh.setColorAt(i, baseColor);
+                }
+            } else {
+                this.dummyObj.position.set(0, -999, 0);
+                this.dummyObj.updateMatrix();
+                this.instancedMesh.setMatrixAt(i, this.dummyObj.matrix);
+            }
+        }
+        this.instancedMesh.instanceMatrix.needsUpdate = true;
+        if (this.instancedMesh.instanceColor) this.instancedMesh.instanceColor.needsUpdate = true;
+
+        this.renderer.render(this.scene, this.camera);
+    }
+}
+
+let app;
+window.onload = () => {
+    app = new App();
+};
+</script>
+</body>
+</html>
