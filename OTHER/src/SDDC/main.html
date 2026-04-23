@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="ja" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SDDC 圧縮技術コンソール</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        cyber: {
+                            dark: '#0a0f16',
+                            panel: '#111827',
+                            border: '#1f2937',
+                            accent: '#10b981', // Emerald
+                            accent_hover: '#059669',
+                            warn: '#f59e0b',
+                            danger: '#ef4444',
+                            text: '#a1a1aa'
+                        }
+                    },
+                    fontFamily: {
+                        mono: ['"Fira Code"', '"Courier New"', 'monospace'],
+                        sans: ['"Inter"', 'sans-serif']
+                    }
+                }
+            }
+        }
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <style>
+        body { background-color: #0a0f16; color: #e4e4e7; }
+        .cyber-panel { background: #111827; border: 1px solid #1f2937; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5); }
+        .scanline {
+            position: relative;
+            overflow: hidden;
+        }
+        .scanline::after {
+            content: " ";
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            right: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            z-index: 10;
+            background-size: 100% 2px, 3px 100%;
+            pointer-events: none;
+        }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #111827; }
+        ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #10b981; }
+        
+        .glow-text { text-shadow: 0 0 10px rgba(16, 185, 129, 0.5); }
+        .pulse-border { animation: pulseBorder 2s infinite; }
+        @keyframes pulseBorder {
+            0% { border-color: #1f2937; }
+            50% { border-color: #10b981; box-shadow: 0 0 15px rgba(16, 185, 129, 0.2); }
+            100% { border-color: #1f2937; }
+        }
+        .pulse-warn { animation: pulseWarn 2s infinite; }
+        @keyframes pulseWarn {
+            0% { border-color: #1f2937; }
+            50% { border-color: #f59e0b; box-shadow: 0 0 15px rgba(245, 158, 11, 0.2); }
+            100% { border-color: #1f2937; }
+        }
+    </style>
+</head>
+<body class="min-h-screen font-sans p-4 md:p-6 flex flex-col">
+
+    <div class="max-w-6xl mx-auto w-full flex-grow flex flex-col space-y-6">
+        
+        <!-- Header -->
+        <header class="flex justify-between items-end border-b border-cyber-border pb-4">
+            <div>
+                <h1 class="text-3xl font-bold text-white glow-text tracking-wider font-mono">SDDC CORE <span class="text-cyber-accent text-lg">v3.0.0</span></h1>
+                <p class="text-cyber-text text-sm mt-1 font-mono">Entropy Analyzer & Native Offload Engine</p>
+            </div>
+            <div class="text-right hidden md:block text-xs font-mono text-cyber-text">
+                <p>NATIVE_ENGINE: <span class="text-cyber-accent">ONLINE (GZIP STREAM)</span></p>
+                <p>UCD-F MODE: <span class="text-blue-400">ENTROPY AWARE</span></p>
+            </div>
+        </header>
+
+        <!-- メッセージ領域 -->
+        <div id="toast-message" class="hidden w-full p-3 rounded font-mono text-sm font-bold text-center border transition-all duration-300 z-50"></div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            
+            <!-- 左カラム：操作パネル -->
+            <div class="lg:col-span-5 space-y-6">
+                
+                <!-- 圧縮（エンコード）セクション -->
+                <div class="cyber-panel p-5 rounded-lg relative overflow-hidden group">
+                    <div class="absolute top-0 left-0 w-1 h-full bg-cyber-accent"></div>
+                    <h2 class="text-xl font-bold text-white mb-4 font-mono flex items-center">
+                        <svg class="w-5 h-5 mr-2 text-cyber-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                        DATA ENCODE (圧縮パッキング)
+                    </h2>
+                    
+                    <div class="mb-4">
+                        <label class="block text-xs text-cyber-text mb-2 font-mono uppercase">Target Entities (圧縮するファイル)</label>
+                        <input type="file" id="compress-input" multiple 
+                            class="block w-full text-sm text-gray-400 
+                            file:mr-4 file:py-2 file:px-4 
+                            file:rounded file:border-0 
+                            file:text-xs file:font-mono file:font-bold 
+                            file:bg-cyber-border file:text-white 
+                            hover:file:bg-gray-700 transition-colors cursor-pointer bg-black bg-opacity-30 border border-cyber-border rounded p-1">
+                    </div>
+
+                    <!-- エントロピー解析結果エリア (New) -->
+                    <div id="entropy-area" class="hidden mb-4 bg-black bg-opacity-60 p-3 rounded border border-cyber-border font-mono text-[10px]">
+                        <div class="flex justify-between items-center mb-1">
+                            <span class="text-cyber-text uppercase">Data Entropy Analysis:</span>
+                            <span id="entropy-status" class="font-bold">...</span>
+                        </div>
+                        <div class="w-full bg-gray-800 rounded-full h-1.5 overflow-hidden mb-1">
+                            <div id="entropy-bar" class="bg-blue-500 h-1.5 rounded-full w-0 transition-all duration-500"></div>
+                        </div>
+                        <div class="flex justify-between text-gray-500">
+                            <span>Compressible</span>
+                            <span>Random/Compressed</span>
+                        </div>
+                        <p id="entropy-message" class="mt-2 text-yellow-500 hidden leading-tight">
+                            Warning: Selected data has high entropy (likely already compressed like JPG/MP4/ZIP). Further compression will yield minimal results.
+                        </p>
+                    </div>
+
+                    <div id="file-list-area" class="hidden mb-4">
+                        <div class="bg-black bg-opacity-50 border border-cyber-border rounded p-2 max-h-32 overflow-y-auto">
+                            <ul id="compress-list" class="space-y-1 font-mono text-xs"></ul>
+                        </div>
+                    </div>
+
+                    <button id="compress-btn" class="w-full font-mono text-sm py-3 px-4 bg-transparent border border-cyber-accent text-cyber-accent hover:bg-cyber-accent hover:text-white transition-all duration-300 rounded font-bold uppercase tracking-wider flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed">
+                        <span id="compress-btn-text">Execute Native Encode</span>
+                    </button>
+                </div>
+
+                <!-- 解凍（デコード）セクション -->
+                <div class="cyber-panel p-5 rounded-lg relative overflow-hidden">
+                    <div class="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>
+                    <h2 class="text-xl font-bold text-white mb-4 font-mono flex items-center">
+                        <svg class="w-5 h-5 mr-2 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                        STATE REBUILD (解凍・再構築)
+                    </h2>
+                    
+                    <div class="mb-4">
+                        <label class="block text-xs text-cyber-text mb-2 font-mono uppercase">SDDC Archive (.sddc形式)</label>
+                        <input type="file" id="extract-input" accept=".sddc" 
+                            class="block w-full text-sm text-gray-400 
+                            file:mr-4 file:py-2 file:px-4 
+                            file:rounded file:border-0 
+                            file:text-xs file:font-mono file:font-bold 
+                            file:bg-cyber-border file:text-white 
+                            hover:file:bg-gray-700 transition-colors cursor-pointer bg-black bg-opacity-30 border border-cyber-border rounded p-1">
+                    </div>
+
+                    <button id="extract-btn" class="w-full font-mono text-sm py-3 px-4 bg-transparent border border-blue-500 text-blue-500 hover:bg-blue-600 hover:text-white transition-all duration-300 rounded font-bold uppercase tracking-wider flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed mb-4">
+                        <span id="extract-btn-text">Execute Native Decode</span>
+                    </button>
+
+                    <div id="extract-result-area" class="hidden bg-black bg-opacity-50 border border-cyber-border rounded p-3 max-h-48 overflow-y-auto">
+                        <h3 class="text-[10px] text-gray-500 font-mono uppercase mb-2">Reconstructed Entities</h3>
+                        <ul id="extracted-files" class="space-y-2 font-mono text-xs"></ul>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- 右カラム：システムコンソール (SDDC シミュレーション) -->
+            <div class="lg:col-span-7 h-full">
+                <div class="cyber-panel rounded-lg h-full flex flex-col border border-cyber-border relative scanline">
+                    <div class="bg-black bg-opacity-40 p-2 border-b border-cyber-border flex justify-between items-center">
+                        <span class="text-xs font-mono text-gray-400">SYSTEM.LOG // UCD-F Entropy Engine Analyzer</span>
+                        <div class="flex space-x-1">
+                            <div class="w-2 h-2 rounded-full bg-red-500 opacity-50"></div>
+                            <div class="w-2 h-2 rounded-full bg-yellow-500 opacity-50"></div>
+                            <div class="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_5px_#10b981]"></div>
+                        </div>
+                    </div>
+                    <div id="console-output" class="p-4 flex-grow font-mono text-xs sm:text-sm text-green-400 overflow-y-auto max-h-[500px] lg:max-h-none whitespace-pre-wrap leading-relaxed">
+> Initializing SDDC Core v3.0.0...
+> Connecting to Browser Native Compression Engine (GZIP Stream)... [OK]
+> UCD-F Constraints: Entropy Assessment Module Active.
+> Hardware-Offload Ready. Awaiting data entities.
+                    </div>
+                    
+                    <!-- プログレスバー -->
+                    <div class="p-4 border-t border-cyber-border bg-black bg-opacity-50">
+                        <div class="flex justify-between text-[10px] font-mono text-cyber-text mb-1">
+                            <span id="progress-label">IDLE</span>
+                            <span id="progress-percent">0%</span>
+                        </div>
+                        <div class="w-full bg-gray-800 rounded-full h-1.5 overflow-hidden">
+                            <div id="progress-bar" class="bg-cyber-accent h-1.5 rounded-full w-0 transition-all duration-200"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        // DOM Elements
+        const consoleOut = document.getElementById('console-output');
+        const progressBar = document.getElementById('progress-bar');
+        const progressLabel = document.getElementById('progress-label');
+        const progressPercent = document.getElementById('progress-percent');
+        
+        function log(message, type = 'info') {
+            const time = new Date().toISOString().split('T')[1].slice(0, 8);
+            let colorClass = 'text-green-400';
+            if (type === 'warn') colorClass = 'text-yellow-400';
+            if (type === 'error') colorClass = 'text-red-500';
+            if (type === 'system') colorClass = 'text-blue-400';
+            if (type === 'accent') colorClass = 'text-cyber-accent font-bold';
+
+            const line = document.createElement('div');
+            line.className = `mb-1 ${colorClass}`;
+            line.innerHTML = `<span class="text-gray-600">[${time}]</span> ${message}`;
+            consoleOut.appendChild(line);
+            consoleOut.scrollTop = consoleOut.scrollHeight;
+        }
+
+        const delay = ms => new Promise(res => setTimeout(res, ms));
+
+        function showToast(text, type = 'success') {
+            const box = document.getElementById('toast-message');
+            box.textContent = text;
+            if (type === 'error') {
+                box.className = `mb-6 p-3 rounded font-mono text-sm font-bold text-center border transition-all duration-300 z-50 bg-red-900 border-red-500 text-red-100 shadow-[0_0_15px_rgba(239,68,68,0.5)]`;
+            } else {
+                box.className = `mb-6 p-3 rounded font-mono text-sm font-bold text-center border transition-all duration-300 z-50 bg-cyber-dark border-cyber-accent text-cyber-accent shadow-[0_0_15px_rgba(16,185,129,0.3)]`;
+            }
+            box.classList.remove('hidden');
+            setTimeout(() => box.classList.add('hidden'), 4000);
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        // ==========================================
+        // シャノンエントロピー計算 (情報量の測定)
+        // 0.0 (規則的) 〜 8.0 (完全なランダム/圧縮済み)
+        // ==========================================
+        async function calculateEntropy(file) {
+            // 解析速度のため、先頭の最大100KBのみをサンプリング
+            const slice = file.slice(0, Math.min(file.size, 102400));
+            const buffer = await slice.arrayBuffer();
+            const bytes = new Uint8Array(buffer);
+            
+            if (bytes.length === 0) return 0;
+
+            const frequencies = new Array(256).fill(0);
+            for (let i = 0; i < bytes.length; i++) {
+                frequencies[bytes[i]]++;
+            }
+
+            let entropy = 0;
+            for (let i = 0; i < 256; i++) {
+                if (frequencies[i] > 0) {
+                    const p = frequencies[i] / bytes.length;
+                    entropy -= p * Math.log2(p);
+                }
+            }
+            return entropy;
+        }
+
+        // ==========================================
+        // SDDC Native Engine v3
+        // CompressionStream API (GZIP) を使用した強力な圧縮
+        // ==========================================
+        class SDDCEngine {
+            static async encode(files) {
+                const encoder = new TextEncoder();
+                let totalRawSize = 0;
+                let totalPackedSize = 10; // Header: 4(Magic) + 2(Version) + 4(EntityCount)
+
+                const processedFiles = [];
+                
+                if (typeof CompressionStream === 'undefined') {
+                    throw new Error("Critical: Browser CompressionStream API is missing.");
+                }
+
+                for (let i = 0; i < files.length; i++) {
+                    const file = files[i];
+                    totalRawSize += file.size;
+                    const nameBytes = encoder.encode(file.name);
+                    const buffer = await file.arrayBuffer();
+                    const dataBytes = new Uint8Array(buffer);
+                    
+                    // Deflate/GZIP圧縮ストリームへオフロード
+                    const cs = new CompressionStream('gzip');
+                    const writer = cs.writable.getWriter();
+                    writer.write(dataBytes);
+                    writer.close();
+                    
+                    const response = new Response(cs.readable);
+                    const compressedBuffer = await response.arrayBuffer();
+                    const compressedData = new Uint8Array(compressedBuffer);
+
+                    processedFiles.push({
+                        nameBytes: nameBytes,
+                        originalSize: dataBytes.length,
+                        compressedData: compressedData
+                    });
+
+                    // NameLength(2) + Name(N) + OriginalSize(4) + CompressedSize(4) + Data(M)
+                    totalPackedSize += 2 + nameBytes.length + 4 + 4 + compressedData.length;
+                }
+
+                const outBuffer = new ArrayBuffer(totalPackedSize);
+                const outView = new DataView(outBuffer);
+                const outBytes = new Uint8Array(outBuffer);
+
+                // Global Header
+                outBytes.set([83, 68, 68, 67], 0); // 'SDDC'
+                outView.setUint16(4, 2, true);     // Version: 2
+                outView.setUint32(6, files.length, true); // Entity Count
+
+                let offset = 10;
+                for (const pf of processedFiles) {
+                    outView.setUint16(offset, pf.nameBytes.length, true);
+                    offset += 2;
+                    
+                    outBytes.set(pf.nameBytes, offset);
+                    offset += pf.nameBytes.length;
+
+                    outView.setUint32(offset, pf.originalSize, true);
+                    offset += 4;
+                    
+                    outView.setUint32(offset, pf.compressedData.length, true);
+                    offset += 4;
+                    
+                    outBytes.set(pf.compressedData, offset);
+                    offset += pf.compressedData.length;
+                }
+
+                return {
+                    blob: new Blob([outBuffer], { type: 'application/octet-stream' }),
+                    totalRawSize,
+                    totalPackedSize
+                };
+            }
+
+            static async decode(blob) {
+                const buffer = await blob.arrayBuffer();
+                const view = new DataView(buffer);
+                const bytes = new Uint8Array(buffer);
+                const decoder = new TextDecoder();
+
+                if (bytes.length < 10 || bytes[0] !== 83 || bytes[1] !== 68 || bytes[2] !== 68 || bytes[3] !== 67) {
+                    throw new Error("Invalid SDDC format. Magic number mismatch.");
+                }
+
+                if (typeof DecompressionStream === 'undefined') {
+                    throw new Error("Critical: Browser DecompressionStream is missing.");
+                }
+
+                const version = view.getUint16(4, true);
+                const entityCount = view.getUint32(6, true);
+
+                let offset = 10;
+                const entities = [];
+
+                for (let i = 0; i < entityCount; i++) {
+                    const nameLen = view.getUint16(offset, true);
+                    offset += 2;
+                    
+                    const nameBytes = bytes.slice(offset, offset + nameLen);
+                    const name = decoder.decode(nameBytes);
+                    offset += nameLen;
+
+                    const originalSize = view.getUint32(offset, true);
+                    offset += 4;
+
+                    const compressedSize = view.getUint32(offset, true);
+                    offset += 4;
+                    
+                    const compressedData = bytes.slice(offset, offset + compressedSize);
+                    offset += compressedSize;
+
+                    // ネイティブ・デコンプレッション (gzip)
+                    const ds = new DecompressionStream('gzip');
+                    const writer = ds.writable.getWriter();
+                    writer.write(compressedData);
+                    writer.close();
+
+                    const response = new Response(ds.readable);
+                    const originalBuffer = await response.arrayBuffer();
+                    const originalData = new Uint8Array(originalBuffer);
+
+                    entities.push({
+                        name: name,
+                        originalSize: originalData.length,
+                        compressedSize: compressedSize,
+                        blob: new Blob([originalData])
+                    });
+                }
+
+                return { entities };
+            }
+        }
+
+        // --- UI Interactions ---
+
+        document.getElementById('compress-input').addEventListener('change', async (e) => {
+            const listArea = document.getElementById('file-list-area');
+            const list = document.getElementById('compress-list');
+            const entropyArea = document.getElementById('entropy-area');
+            const entropyBar = document.getElementById('entropy-bar');
+            const entropyStatus = document.getElementById('entropy-status');
+            const entropyMsg = document.getElementById('entropy-message');
+            const btn = document.getElementById('compress-btn');
+            
+            const files = e.target.files;
+            
+            list.innerHTML = '';
+            if(files.length > 0) {
+                listArea.classList.remove('hidden');
+                entropyArea.classList.remove('hidden');
+                
+                // エントロピー解析
+                entropyStatus.textContent = "Analyzing...";
+                entropyStatus.className = "font-bold text-blue-400 animate-pulse";
+                entropyBar.style.width = "0%";
+                entropyMsg.classList.add('hidden');
+                btn.disabled = true;
+
+                let totalSize = 0;
+                let maxEntropy = 0;
+
+                for(let i=0; i<files.length; i++) {
+                    totalSize += files[i].size;
+                    const li = document.createElement('li');
+                    li.className = 'flex justify-between items-center border-b border-gray-800 pb-1';
+                    li.innerHTML = `<span class="truncate text-gray-300 pr-2">Entity_${i}: ${files[i].name}</span><span class="text-cyber-accent whitespace-nowrap">${formatBytes(files[i].size)}</span>`;
+                    list.appendChild(li);
+
+                    // 簡易サンプリングで最大エントロピーを取得
+                    const ent = await calculateEntropy(files[i]);
+                    if (ent > maxEntropy) maxEntropy = ent;
+                }
+
+                log(`Analyzed ${files.length} entities. Total raw size: ${formatBytes(totalSize)}`, 'info');
+                log(`Calculated Shannon Entropy: ${maxEntropy.toFixed(2)} / 8.0`, 'system');
+
+                // UI更新
+                const percentage = (maxEntropy / 8.0) * 100;
+                entropyBar.style.width = `${percentage}%`;
+                
+                if (maxEntropy > 7.5) {
+                    // 画像や動画、圧縮済みデータ
+                    entropyBar.className = "bg-red-500 h-1.5 rounded-full transition-all duration-500";
+                    entropyStatus.textContent = `${maxEntropy.toFixed(2)} (HIGH / UNCOMPRESSIBLE)`;
+                    entropyStatus.className = "font-bold text-red-500";
+                    entropyMsg.classList.remove('hidden');
+                    btn.classList.add('pulse-warn');
+                    log(`WARNING: High entropy detected. Data is likely already compressed (JPG/MP4/ZIP).`, 'warn');
+                } else if (maxEntropy > 6.0) {
+                    entropyBar.className = "bg-yellow-500 h-1.5 rounded-full transition-all duration-500";
+                    entropyStatus.textContent = `${maxEntropy.toFixed(2)} (MODERATE)`;
+                    entropyStatus.className = "font-bold text-yellow-500";
+                    btn.classList.remove('pulse-warn');
+                } else {
+                    // テキストなど
+                    entropyBar.className = "bg-cyber-accent h-1.5 rounded-full transition-all duration-500";
+                    entropyStatus.textContent = `${maxEntropy.toFixed(2)} (LOW / COMPRESSIBLE)`;
+                    entropyStatus.className = "font-bold text-cyber-accent";
+                    btn.classList.remove('pulse-warn');
+                    log(`Optimal data structure detected. High compression ratio expected.`, 'accent');
+                }
+
+                btn.disabled = false;
+            } else {
+                listArea.classList.add('hidden');
+                entropyArea.classList.add('hidden');
+                btn.classList.remove('pulse-warn');
+            }
+        });
+
+        // --- ENCODE ---
+        document.getElementById('compress-btn').addEventListener('click', async () => {
+            const files = document.getElementById('compress-input').files;
+            if (files.length === 0) return;
+
+            const btn = document.getElementById('compress-btn');
+            btn.disabled = true;
+            document.getElementById('compress-btn-text').textContent = 'Compressing Stream...';
+
+            log(`\n--- INITIATING NATIVE STREAM ENCODE ---`, 'accent');
+            
+            try {
+                progressLabel.textContent = 'PHASE 1: NATIVE GZIP OFFLOAD';
+                progressBar.style.width = '50%'; progressPercent.textContent = '50%';
+                log(`Streaming entities through native GZIP compressor...`, 'system');
+                
+                const { blob, totalRawSize, totalPackedSize } = await SDDCEngine.encode(files);
+                
+                progressLabel.textContent = 'PHASE 2: ZERO-COPY PACKING';
+                progressBar.style.width = '90%'; progressPercent.textContent = '90%';
+                log(`Structuring SDDC Archive headers...`);
+                await delay(400);
+
+                const date = new Date();
+                const filename = `Archive_${date.getTime().toString().slice(-6)}.sddc`;
+                
+                saveAs(blob, filename);
+                
+                const reductionRatio = totalRawSize > 0 ? ((1 - (totalPackedSize / totalRawSize)) * 100).toFixed(1) : 0;
+
+                progressBar.style.width = '100%'; progressPercent.textContent = '100%';
+                progressLabel.textContent = 'COMPLETE';
+                
+                log(`--- SEQUENCE TERMINATED ---`, 'accent');
+                log(`Original Data: ${formatBytes(totalRawSize)}`);
+                log(`SDDC Archive : ${formatBytes(totalPackedSize)}`, 'system');
+                
+                if (reductionRatio > 0) {
+                    log(`[!] Absolute Size Reduction: ${reductionRatio}%`, 'accent');
+                    showToast(`Compression complete. Saved ${reductionRatio}% space.`);
+                } else {
+                    log(`[!] Size Increased due to mathematical entropy limit.`, 'warn');
+                    showToast(`Packed successfully, but data was incompressible.`, 'warn');
+                }
+                
+            } catch (error) {
+                console.error(error);
+                log(`FATAL ERROR: ${error.message}`, 'error');
+                showToast('System failure during compression.', 'error');
+            } finally {
+                btn.disabled = false;
+                document.getElementById('compress-btn-text').textContent = 'Execute Native Encode';
+                setTimeout(() => { progressBar.style.width = '0%'; progressPercent.textContent = '0%'; progressLabel.textContent = 'IDLE'; }, 2500);
+            }
+        });
+
+        // --- DECODE ---
+        document.getElementById('extract-btn').addEventListener('click', async () => {
+            const fileInput = document.getElementById('extract-input');
+            if (fileInput.files.length === 0) return;
+
+            const sddcFile = fileInput.files[0];
+            const btn = document.getElementById('extract-btn');
+            const resultArea = document.getElementById('extract-result-area');
+            const resultList = document.getElementById('extracted-files');
+            
+            btn.disabled = true;
+            document.getElementById('extract-btn-text').textContent = 'Rebuilding via Native Engine...';
+            resultArea.classList.remove('hidden');
+            resultList.innerHTML = '<li class="text-cyber-accent animate-pulse">Streaming data to engine...</li>';
+            
+            log(`\n--- INITIATING NATIVE DECODE SEQUENCE ---`, 'system');
+
+            try {
+                progressBar.style.width = '40%'; progressPercent.textContent = '40%';
+                progressLabel.textContent = 'DECODING HEADERS & STREAMING';
+                await delay(400);
+
+                const { entities } = await SDDCEngine.decode(sddcFile);
+                
+                progressBar.style.width = '80%'; progressPercent.textContent = '80%';
+                progressLabel.textContent = 'RECONSTRUCTING DATA INTEGRITY';
+                
+                resultList.innerHTML = '';
+                
+                if (entities.length === 0) {
+                    resultList.innerHTML = '<li class="text-red-400">No entities found.</li>';
+                } else {
+                    for (const entity of entities) {
+                        const url = URL.createObjectURL(entity.blob);
+                        let ratioTxt = "";
+                        if (entity.originalSize > 0) {
+                            const ratio = ((1 - (entity.compressedSize / entity.originalSize)) * 100).toFixed(1);
+                            ratioTxt = ratio > 0 ? `(Saved ${ratio}%)` : `(Incompressible)`;
+                        }
+
+                        const li = document.createElement('li');
+                        li.className = 'flex flex-col sm:flex-row justify-between sm:items-center bg-gray-800 bg-opacity-50 p-3 rounded border border-gray-700';
+                        li.innerHTML = `
+                            <div class="truncate pr-2 mb-2 sm:mb-0">
+                                <span class="text-white block sm:inline font-bold">${entity.name}</span>
+                                <span class="text-gray-400 text-[10px] ml-0 sm:ml-2 block sm:inline">
+                                    Raw: ${formatBytes(entity.originalSize)} | Packed: ${formatBytes(entity.compressedSize)} ${ratioTxt}
+                                </span>
+                            </div>
+                            <a href="${url}" download="${entity.name}" class="text-xs px-3 py-1.5 bg-blue-900 text-blue-300 hover:bg-blue-700 hover:text-white rounded transition text-center">MANIFEST</a>
+                        `;
+                        resultList.appendChild(li);
+                    }
+                    log(`Rebuild complete. ${entities.length} entities manifested.`, 'accent');
+                }
+
+                progressBar.style.width = '100%'; progressPercent.textContent = '100%';
+                progressLabel.textContent = 'REBUILD COMPLETE';
+                
+            } catch (error) {
+                console.error(error);
+                log(`STATE REBUILD FAILED: ${error.message}`, 'error');
+                resultList.innerHTML = `<li class="text-red-500 font-bold">CRITICAL: Rebuild Failed.<br><span class="text-xs font-normal">${error.message}</span></li>`;
+            } finally {
+                btn.disabled = false;
+                document.getElementById('extract-btn-text').textContent = 'Execute Native Decode';
+                setTimeout(() => { progressBar.style.width = '0%'; progressPercent.textContent = '0%'; progressLabel.textContent = 'IDLE'; }, 2500);
+            }
+        });
+    </script>
+</body>
+</html>
