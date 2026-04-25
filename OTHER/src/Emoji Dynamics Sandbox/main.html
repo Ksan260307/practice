@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Emoji Dynamics Sandbox</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background-color: #050505; 
+            color: #0f0; 
+            font-family: 'Courier New', Courier, monospace; 
+            user-select: none;
+        }
+        canvas { 
+            display: block; 
+            width: 100vw; 
+            height: 100vh; 
+        }
+        #hud { 
+            position: absolute; 
+            top: 20px; 
+            left: 20px; 
+            pointer-events: none; 
+            z-index: 10; 
+            background: rgba(0, 15, 0, 0.85); 
+            padding: 20px; 
+            border: 1px solid #0f0; 
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.3); 
+            backdrop-filter: blur(4px);
+        }
+        h1 { 
+            font-size: 1.2rem; 
+            margin: 0 0 15px 0; 
+            border-bottom: 1px solid #0f0; 
+            padding-bottom: 8px; 
+            text-shadow: 0 0 5px #0f0;
+        }
+        .line { 
+            margin: 8px 0; 
+            font-size: 0.9rem; 
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 20px;
+        }
+        .highlight { 
+            color: #fff; 
+            font-weight: bold; 
+            text-shadow: 0 0 3px #fff;
+        }
+        .desc {
+            margin-top: 15px; 
+            font-size: 0.8rem; 
+            color: #888;
+            border-top: 1px dashed #0f0;
+            padding-top: 10px;
+            line-height: 1.4;
+        }
+        #error-msg {
+            color: #ff3333;
+            text-shadow: 0 0 5px #ff0000;
+        }
+        button {
+            background: #0f0;
+            color: #000;
+            border: 1px solid #0f0;
+            padding: 5px 8px;
+            font-family: inherit;
+            font-weight: bold;
+            font-size: 0.8rem;
+            cursor: pointer;
+            pointer-events: auto;
+            transition: all 0.2s;
+            flex: 1;
+            text-align: center;
+        }
+        button:hover {
+            background: #fff;
+            color: #000;
+            box-shadow: 0 0 10px #0f0;
+        }
+        button:active {
+            background: #050505;
+            color: #0f0;
+        }
+        
+        .btn-clear {
+            background: #ff3333;
+            color: #000;
+            border: 1px solid #ff3333;
+        }
+        .btn-clear:hover {
+            background: #fff;
+            color: #000;
+            box-shadow: 0 0 10px #ff3333;
+        }
+        .btn-clear:active {
+            background: #050505;
+            color: #ff3333;
+        }
+
+        .btn-group {
+            display: flex;
+            width: 100%;
+            gap: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="hud">
+        <h1>Emoji Dynamics Sandbox v1.0</h1>
+        <div class="line">FPS: <span class="highlight" id="hud-fps">0</span></div>
+        <div class="line">Active Entities: <span class="highlight" id="hud-count">10</span></div>
+        <div class="line" style="flex-direction: column; align-items: flex-start; gap: 5px;">
+            <div class="btn-group">
+                <button class="count-btn" data-amount="-10000">-10k</button>
+                <button class="count-btn" data-amount="-1000">-1k</button>
+                <button class="count-btn" data-amount="-100">-100</button>
+                <button class="count-btn" data-amount="-10">-10</button>
+            </div>
+            <div class="btn-group">
+                <button class="count-btn" data-amount="10000">+10k</button>
+                <button class="count-btn" data-amount="1000">+1k</button>
+                <button class="count-btn" data-amount="100">+100</button>
+                <button class="count-btn" data-amount="10">+10</button>
+            </div>
+            <div class="btn-group" style="margin-top: 5px;">
+                <button id="btn-clear" class="btn-clear">ALL REMOVE</button>
+            </div>
+        </div>
+        <div class="line" style="margin-top: 15px;">Memory Layout: <span class="highlight">Bit-packed SoA</span></div>
+        <div class="line">Collision Solver: <span class="highlight">Ping-Pong Jacobi</span></div>
+        <div class="line">Zero-Lock Terrain: <span class="highlight" id="hud-zerolock">VISUALIZED</span></div>
+        <div class="line">Local Entropy Input: <span class="highlight" id="hud-entropy">0.00</span></div>
+        <div class="desc">
+            [Dynamics Protocol]<br>
+            - Mouse Move: Inject environmental entropy.<br>
+            - Left Click: Generate entropy burst.<br>
+            - <span class="highlight">Right Click: Black Hole Attractor!</span><br>
+            - Darkened entities are in Zero-Lock (Terrain).
+        </div>
+    </div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        let currentEntityCount = 10;
+        const MAX_ENTITY_COUNT = 100000;
+        const ENTITY_SIZE = 24;
+
+        async function init() {
+            if (!navigator.gpu) {
+                document.getElementById('hud').innerHTML = `
+                    <h1 id="error-msg">FATAL ERROR</h1>
+                    <p>Emoji Dynamics Sandbox Initialization Failed.</p>
+                    <p>Your browser does not support WebGPU.</p>
+                `;
+                return;
+            }
+
+            const adapter = await navigator.gpu.requestAdapter();
+            const device = await adapter.requestDevice();
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('webgpu');
+            const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
+            
+            const pixelRatio = window.devicePixelRatio || 1;
+            canvas.width = window.innerWidth * pixelRatio;
+            canvas.height = window.innerHeight * pixelRatio;
+            ctx.configure({ device, format: presentationFormat, alphaMode: 'premultiplied' });
+
+            // Texture Atlas
+            const atlasSize = 512;
+            const emojiCanvas = document.createElement('canvas');
+            emojiCanvas.width = atlasSize;
+            emojiCanvas.height = atlasSize;
+            const eCtx = emojiCanvas.getContext('2d');
+            eCtx.clearRect(0, 0, atlasSize, atlasSize);
+            
+            const emojis = ['😀', '🚀', '🔥', '💎', '🥶', '🤬', '😱', '👻', '👽', '🤖', '💩', '🤡', '💀', '🎃', '🐱', '🛸'];
+            const s = atlasSize / 4;
+            eCtx.font = `${s * 0.75}px sans-serif`;
+            eCtx.textAlign = 'center';
+            eCtx.textBaseline = 'middle';
+            for (let i = 0; i < 16; i++) {
+                const x = (i % 4) * s + s / 2;
+                const y = Math.floor(i / 4) * s + s / 2;
+                eCtx.fillText(emojis[i], x, y);
+            }
+
+            const imgBitmap = await createImageBitmap(emojiCanvas);
+            const texture = device.createTexture({
+                size: [imgBitmap.width, imgBitmap.height, 1],
+                format: 'rgba8unorm',
+                usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+            });
+            device.queue.copyExternalImageToTexture({ source: imgBitmap }, { texture: texture }, [imgBitmap.width, imgBitmap.height]);
+            const sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
+
+            const GRID_W = 128;
+            const GRID_H = 128;
+            const GRID_CAPACITY = 32;
+
+            // --- WGSL Shaders ---
+            const computeWGSL = `
+                struct Params {
+                    res: vec2<f32>,
+                    mouse: vec2<f32>,
+                    entropy: f32,
+                    time: f32,
+                    entityCount: f32,
+                    blackHole: f32,
+                }
+
+                struct Entity {
+                    pos: vec2<f32>,
+                    vel: vec2<f32>,
+                    packed_data: u32,
+                    vif_state: u32,
+                }
+
+                @group(0) @binding(0) var<uniform> params: Params;
+                @group(0) @binding(1) var<storage, read> entities_src: array<Entity>;
+                @group(0) @binding(2) var<storage, read_write> grid_counts: array<atomic<u32>>;
+                @group(0) @binding(3) var<storage, read_write> grid_particles: array<u32>;
+                @group(0) @binding(4) var<storage, read_write> entities_dst: array<Entity>; // Ping-Pong Buffer
+
+                const GRID_W = 128u;
+                const GRID_H = 128u;
+                const CELL_SIZE = 64.0;
+                const CAPACITY = 32u;
+
+                @compute @workgroup_size(256)
+                fn buildGrid(@builtin(global_invocation_id) id: vec3<u32>) {
+                    let idx = id.x;
+                    if (idx >= u32(params.entityCount)) { return; }
+
+                    let ent = entities_src[idx];
+                    let cx = clamp(u32(ent.pos.x / CELL_SIZE), 0u, GRID_W - 1u);
+                    let cy = clamp(u32(ent.pos.y / CELL_SIZE), 0u, GRID_H - 1u);
+                    let cell_idx = cy * GRID_W + cx;
+
+                    let offset = atomicAdd(&grid_counts[cell_idx], 1u);
+                    if (offset < CAPACITY) {
+                        grid_particles[cell_idx * CAPACITY + offset] = idx;
+                    }
+                }
+
+                @compute @workgroup_size(256)
+                fn computeMain(@builtin(global_invocation_id) id: vec3<u32>) {
+                    let idx = id.x;
+                    if (idx >= u32(params.entityCount)) { return; }
+
+                    var ent = entities_src[idx];
+                    let state = (ent.packed_data >> 8u) & 0x7u;
+                    
+                    let d = distance(ent.pos, params.mouse);
+                    
+                    // Black Hole Attractor Logic
+                    if (params.blackHole > 0.5) {
+                        if (d < 600.0) {
+                            let dir = normalize(params.mouse - ent.pos);
+                            let pull = (600.0 - d) / 600.0;
+                            ent.vel += dir * pull * 4.0;
+                            ent.packed_data = (ent.packed_data & 0xFFFFF8FFu) | (1u << 8u); // Wake up
+                        }
+                    } else if (d < 180.0 + params.entropy * 100.0) {
+                        let dir = normalize(ent.pos - params.mouse);
+                        ent.vel += dir * (params.entropy + 0.5) * 2.5;
+                        ent.packed_data = (ent.packed_data & 0xFFFFF8FFu) | (1u << 8u); // Wake up
+                    } else if (state == 1u) {
+                        ent.vel.y += 0.25; // Gravity
+                    }
+
+                    if (state == 1u) {
+                        let cx = i32(ent.pos.x / CELL_SIZE);
+                        let cy = i32(ent.pos.y / CELL_SIZE);
+                        
+                        var force = vec2<f32>(0.0);
+                        let diam = 36.0;
+
+                        for (var y = -1; y <= 1; y++) {
+                            for (var x = -1; x <= 1; x++) {
+                                let check_x = cx + x;
+                                let check_y = cy + y;
+                                
+                                if (check_x >= 0 && check_x < i32(GRID_W) && check_y >= 0 && check_y < i32(GRID_H)) {
+                                    let cell_idx = u32(check_y) * GRID_W + u32(check_x);
+                                    let count = min(atomicLoad(&grid_counts[cell_idx]), CAPACITY);
+                                    
+                                    for (var i = 0u; i < count; i++) {
+                                        let other_idx = grid_particles[cell_idx * CAPACITY + i];
+                                        if (other_idx != idx) {
+                                            let other = entities_src[other_idx];
+                                            let dir = ent.pos - other.pos;
+                                            let dist = length(dir);
+                                            
+                                            if (dist > 0.001 && dist < diam) {
+                                                let overlap = diam - dist;
+                                                let n = dir / dist;
+                                                // Reduce repulsion slightly during black hole to allow clumping
+                                                let repulsionStrength = select(0.15, 0.05, params.blackHole > 0.5);
+                                                force += n * overlap * repulsionStrength;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        ent.pos += force;
+                        ent.vel += force * 0.15;
+                        
+                        ent.pos += ent.vel;
+                        ent.vel *= 0.985;
+                        
+                        let size = 24.0;
+                        if (ent.pos.x < size) { ent.pos.x = size; ent.vel.x *= -0.7; }
+                        if (ent.pos.x > params.res.x - size) { ent.pos.x = params.res.x - size; ent.vel.x *= -0.7; }
+                        if (ent.pos.y < size) { ent.pos.y = size; ent.vel.y *= -0.7; }
+                        
+                        if (ent.pos.y > params.res.y - size) { 
+                            ent.pos.y = params.res.y - size; 
+                            ent.vel.y *= -0.6; 
+                            ent.vel.x *= 0.85;
+                            
+                            // Terrain generation logic
+                            if (length(ent.vel) < 0.4 && length(force) < 0.5 && ent.pos.y > params.res.y - size * 1.5) {
+                                ent.packed_data = (ent.packed_data & 0xFFFFF8FFu) | (0u << 8u);
+                                ent.vel = vec2<f32>(0.0);
+                            }
+                        }
+                    } else {
+                        // Terrain wake-up logic
+                        let cx = i32(ent.pos.x / CELL_SIZE);
+                        let cy = i32(ent.pos.y / CELL_SIZE);
+                        var wakeup = false;
+                        
+                        for (var y = -1; y <= 1 && !wakeup; y++) {
+                            for (var x = -1; x <= 1 && !wakeup; x++) {
+                                let check_x = cx + x;
+                                let check_y = cy + y;
+                                if (check_x >= 0 && check_x < i32(GRID_W) && check_y >= 0 && check_y < i32(GRID_H)) {
+                                    let cell_idx = u32(check_y) * GRID_W + u32(check_x);
+                                    let count = min(atomicLoad(&grid_counts[cell_idx]), CAPACITY);
+                                    for (var i = 0u; i < count; i++) {
+                                        let other_idx = grid_particles[cell_idx * CAPACITY + i];
+                                        if (other_idx != idx) {
+                                            let other = entities_src[other_idx];
+                                            let other_state = (other.packed_data >> 8u) & 0x7u;
+                                            if (other_state == 1u) {
+                                                if (length(ent.pos - other.pos) < 40.0 && length(other.vel) > 3.0) {
+                                                    wakeup = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (wakeup) {
+                            ent.packed_data = (ent.packed_data & 0xFFFFF8FFu) | (1u << 8u);
+                        }
+                    }
+
+                    // Write to destination buffer (Ping-Pong)
+                    entities_dst[idx] = ent;
+                }
+            `;
+
+            const renderWGSL = `
+                struct Params {
+                    res: vec2<f32>,
+                    mouse: vec2<f32>,
+                    entropy: f32,
+                    time: f32,
+                    entityCount: f32,
+                    pad2: f32,
+                }
+                struct Entity {
+                    pos: vec2<f32>,
+                    vel: vec2<f32>,
+                    packed_data: u32,
+                    vif_state: u32,
+                }
+                @group(0) @binding(0) var<uniform> params: Params;
+                @group(0) @binding(1) var<storage, read> entities: array<Entity>;
+
+                struct VertexOutput {
+                    @builtin(position) pos: vec4<f32>,
+                    @location(0) uv: vec2<f32>,
+                    @location(1) color_mult: vec4<f32>,
+                }
+
+                @vertex
+                fn vertexMain(
+                    @builtin(vertex_index) vIdx: u32,
+                    @builtin(instance_index) iIdx: u32
+                ) -> VertexOutput {
+                    let ent = entities[iIdx];
+                    let emoji_idx = ent.packed_data & 0xFFu;
+                    let state = (ent.packed_data >> 8u) & 0x7u;
+                    
+                    var quad = array<vec2<f32>, 6>(
+                        vec2<f32>(-1.0, -1.0), vec2<f32>( 1.0, -1.0), vec2<f32>(-1.0,  1.0),
+                        vec2<f32>(-1.0,  1.0), vec2<f32>( 1.0, -1.0), vec2<f32>( 1.0,  1.0)
+                    );
+                    let v_pos = quad[vIdx];
+                    
+                    let world_pos = ent.pos + v_pos * 24.0;
+                    
+                    let ndc_x = (world_pos.x / params.res.x) * 2.0 - 1.0;
+                    let ndc_y = 1.0 - (world_pos.y / params.res.y) * 2.0;
+
+                    var out: VertexOutput;
+                    out.pos = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
+                    
+                    let grid_x = f32(emoji_idx % 4u);
+                    let grid_y = f32(emoji_idx / 4u);
+                    let local_u = v_pos.x * 0.5 + 0.5;
+                    let local_v = v_pos.y * 0.5 + 0.5;
+                    out.uv = vec2<f32>((grid_x + local_u) * 0.25, (grid_y + local_v) * 0.25);
+                    
+                    // Visual feedback for Zero-Lock (Terrain)
+                    if (state == 0u) {
+                        out.color_mult = vec4<f32>(0.4, 0.4, 0.4, 1.0); // Darken
+                    } else {
+                        out.color_mult = vec4<f32>(1.0, 1.0, 1.0, 1.0); // Normal
+                    }
+                    
+                    return out;
+                }
+
+                @group(1) @binding(0) var tex: texture_2d<f32>;
+                @group(1) @binding(1) var samp: sampler;
+
+                @fragment
+                fn fragmentMain(in: VertexOutput) -> @location(0) vec4<f32> {
+                    let color = textureSample(tex, samp, in.uv);
+                    if (color.a < 0.1) { discard; }
+                    return color * in.color_mult;
+                }
+            `;
+
+            const computeModule = device.createShaderModule({ code: computeWGSL });
+            const renderModule = device.createShaderModule({ code: renderWGSL });
+
+            // Create Ping-Pong Buffers
+            const bufferSize = MAX_ENTITY_COUNT * ENTITY_SIZE;
+            const initialData = new ArrayBuffer(bufferSize);
+            const f32View = new Float32Array(initialData);
+            const u32View = new Uint32Array(initialData);
+
+            for (let i = 0; i < currentEntityCount; i++) {
+                const offset = i * 6;
+                f32View[offset + 0] = Math.random() * canvas.width;
+                f32View[offset + 1] = Math.random() * canvas.height * -3.0;
+                f32View[offset + 2] = (Math.random() - 0.5) * 10.0;
+                f32View[offset + 3] = (Math.random() - 0.5) * 10.0;
+                const state = 1;
+                u32View[offset + 4] = (state << 8) | Math.floor(Math.random() * 16); 
+                u32View[offset + 5] = 0;
+            }
+
+            const entityBufferA = device.createBuffer({ size: bufferSize, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+            const entityBufferB = device.createBuffer({ size: bufferSize, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+            device.queue.writeBuffer(entityBufferA, 0, initialData);
+            device.queue.writeBuffer(entityBufferB, 0, initialData);
+
+            const uniformBuffer = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+
+            const gridCountsBuffer = device.createBuffer({ size: GRID_W * GRID_H * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+            const gridParticlesBuffer = device.createBuffer({ size: GRID_W * GRID_H * GRID_CAPACITY * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+
+            // Layouts
+            const computeBindGroupLayout = device.createBindGroupLayout({
+                entries: [
+                    { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+                    { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+                    { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+                    { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+                    { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }
+                ]
+            });
+            const renderBindGroupLayout0 = device.createBindGroupLayout({
+                entries: [
+                    { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+                    { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } }
+                ]
+            });
+            const renderBindGroupLayout1 = device.createBindGroupLayout({
+                entries: [
+                    { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+                    { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} }
+                ]
+            });
+
+            // BindGroups for Ping-Pong
+            const createComputeBindGroup = (src, dst) => device.createBindGroup({
+                layout: computeBindGroupLayout,
+                entries: [
+                    { binding: 0, resource: { buffer: uniformBuffer } },
+                    { binding: 1, resource: { buffer: src } },
+                    { binding: 2, resource: { buffer: gridCountsBuffer } },
+                    { binding: 3, resource: { buffer: gridParticlesBuffer } },
+                    { binding: 4, resource: { buffer: dst } }
+                ]
+            });
+            const computeBindGroupA = createComputeBindGroup(entityBufferA, entityBufferB);
+            const computeBindGroupB = createComputeBindGroup(entityBufferB, entityBufferA);
+
+            const createRenderBindGroup = (src) => device.createBindGroup({
+                layout: renderBindGroupLayout0,
+                entries: [
+                    { binding: 0, resource: { buffer: uniformBuffer } },
+                    { binding: 1, resource: { buffer: src } }
+                ]
+            });
+            const renderBindGroupA = createRenderBindGroup(entityBufferA);
+            const renderBindGroupB = createRenderBindGroup(entityBufferB);
+
+            const renderBindGroup1 = device.createBindGroup({
+                layout: renderBindGroupLayout1,
+                entries: [{ binding: 0, resource: texture }, { binding: 1, resource: sampler }]
+            });
+
+            // Pipelines
+            const buildGridPipeline = device.createComputePipeline({ layout: device.createPipelineLayout({ bindGroupLayouts: [computeBindGroupLayout] }), compute: { module: computeModule, entryPoint: 'buildGrid' } });
+            const computePipeline = device.createComputePipeline({ layout: device.createPipelineLayout({ bindGroupLayouts: [computeBindGroupLayout] }), compute: { module: computeModule, entryPoint: 'computeMain' } });
+            
+            const renderPipeline = device.createRenderPipeline({
+                layout: device.createPipelineLayout({ bindGroupLayouts: [renderBindGroupLayout0, renderBindGroupLayout1] }),
+                vertex: { module: renderModule, entryPoint: 'vertexMain' },
+                fragment: {
+                    module: renderModule,
+                    entryPoint: 'fragmentMain',
+                    targets: [{
+                        format: presentationFormat,
+                        blend: { color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' }, alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' } }
+                    }]
+                },
+                primitive: { topology: 'triangle-list' }
+            });
+
+            // Handle +/- buttons generally using data-amount attribute
+            document.querySelectorAll('.count-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const delta = parseInt(e.target.getAttribute('data-amount'));
+                    
+                    if (delta < 0) {
+                        currentEntityCount = Math.max(0, currentEntityCount + delta);
+                        document.getElementById('hud-count').innerText = currentEntityCount.toLocaleString();
+                    } else if (delta > 0) {
+                        if (currentEntityCount >= MAX_ENTITY_COUNT) return;
+                        const startIdx = currentEntityCount;
+                        const updateCount = Math.min(delta, MAX_ENTITY_COUNT - currentEntityCount);
+                        currentEntityCount += updateCount;
+                        
+                        const updateData = new ArrayBuffer(updateCount * ENTITY_SIZE);
+                        const u_f32View = new Float32Array(updateData);
+                        const u_u32View = new Uint32Array(updateData);
+
+                        for (let i = 0; i < updateCount; i++) {
+                            const offset = i * 6;
+                            u_f32View[offset + 0] = Math.random() * canvas.width;
+                            u_f32View[offset + 1] = Math.random() * canvas.height * -3.0;
+                            u_f32View[offset + 2] = (Math.random() - 0.5) * 10.0;
+                            u_f32View[offset + 3] = (Math.random() - 0.5) * 10.0;
+                            u_u32View[offset + 4] = (1 << 8) | Math.floor(Math.random() * 16); 
+                            u_u32View[offset + 5] = 0;
+                        }
+                        
+                        // Write to both buffers to ensure consistency in Ping-Pong
+                        device.queue.writeBuffer(entityBufferA, startIdx * ENTITY_SIZE, updateData);
+                        device.queue.writeBuffer(entityBufferB, startIdx * ENTITY_SIZE, updateData);
+                        document.getElementById('hud-count').innerText = currentEntityCount.toLocaleString();
+                    }
+                });
+            });
+
+            // Handle Clear button
+            document.getElementById('btn-clear').addEventListener('click', () => {
+                currentEntityCount = 0;
+                document.getElementById('hud-count').innerText = currentEntityCount.toLocaleString();
+            });
+
+            let mouseX = -1000, mouseY = -1000;
+            let targetEntropy = 0;
+            let currentEntropy = 0;
+            let isBlackHole = false;
+            let time = 0;
+            let frameIdx = 0;
+            
+            // FPS Counter
+            let lastTime = performance.now();
+            let frames = 0;
+
+            window.addEventListener('contextmenu', e => e.preventDefault()); // Prevent native right click menu
+
+            window.addEventListener('mousemove', (e) => {
+                mouseX = e.clientX * pixelRatio;
+                mouseY = e.clientY * pixelRatio;
+                if (!isBlackHole) {
+                    targetEntropy = Math.min(targetEntropy + 0.05, 3.0);
+                }
+            });
+
+            window.addEventListener('mousedown', (e) => {
+                if (e.target.tagName !== 'BUTTON') {
+                    if (e.button === 2 || e.shiftKey) { // Right click or Shift+Left click
+                        isBlackHole = true;
+                    } else {
+                        targetEntropy = 8.0;
+                    }
+                }
+            });
+
+            window.addEventListener('mouseup', (e) => {
+                if (e.button === 2 || e.shiftKey) {
+                    isBlackHole = false;
+                    targetEntropy = 20.0; // Supernova explosion!
+                }
+            });
+
+            window.addEventListener('resize', () => {
+                canvas.width = window.innerWidth * pixelRatio;
+                canvas.height = window.innerHeight * pixelRatio;
+            });
+
+            function frame() {
+                const now = performance.now();
+                frames++;
+                if (now - lastTime >= 1000) {
+                    document.getElementById('hud-fps').innerText = frames;
+                    frames = 0;
+                    lastTime = now;
+                }
+
+                time += 0.016;
+                currentEntropy += (targetEntropy - currentEntropy) * 0.1;
+                targetEntropy = Math.max(0, targetEntropy - 0.03);
+                document.getElementById('hud-entropy').innerText = currentEntropy.toFixed(2);
+                
+                const uniformData = new Float32Array([
+                    canvas.width, canvas.height,
+                    mouseX, mouseY,
+                    currentEntropy, time,
+                    currentEntityCount, isBlackHole ? 1.0 : 0.0
+                ]);
+                device.queue.writeBuffer(uniformBuffer, 0, uniformData);
+
+                const commandEncoder = device.createCommandEncoder();
+                
+                if (currentEntityCount > 0) {
+                    commandEncoder.clearBuffer(gridCountsBuffer);
+                    const computePass = commandEncoder.beginComputePass();
+                    
+                    // Ping-Pong Logic
+                    const bindGroupToUse = (frameIdx % 2 === 0) ? computeBindGroupA : computeBindGroupB;
+                    
+                    computePass.setPipeline(buildGridPipeline);
+                    computePass.setBindGroup(0, bindGroupToUse);
+                    computePass.dispatchWorkgroups(Math.ceil(currentEntityCount / 256));
+                    
+                    computePass.setPipeline(computePipeline);
+                    computePass.setBindGroup(0, bindGroupToUse);
+                    computePass.dispatchWorkgroups(Math.ceil(currentEntityCount / 256));
+                    computePass.end();
+                }
+
+                const renderPass = commandEncoder.beginRenderPass({
+                    colorAttachments: [{
+                        view: ctx.getCurrentTexture().createView(),
+                        loadOp: 'clear',
+                        clearValue: { r: 0.02, g: 0.03, b: 0.02, a: 1.0 },
+                        storeOp: 'store',
+                    }]
+                });
+                
+                if (currentEntityCount > 0) {
+                    // Render from the buffer that was just written to
+                    const renderBindGroupToUse = (frameIdx % 2 === 0) ? renderBindGroupB : renderBindGroupA;
+                    renderPass.setPipeline(renderPipeline);
+                    renderPass.setBindGroup(0, renderBindGroupToUse);
+                    renderPass.setBindGroup(1, renderBindGroup1);
+                    renderPass.draw(6, currentEntityCount);
+                }
+                renderPass.end();
+
+                device.queue.submit([commandEncoder.finish()]);
+                frameIdx++;
+                requestAnimationFrame(frame);
+            }
+            requestAnimationFrame(frame);
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
