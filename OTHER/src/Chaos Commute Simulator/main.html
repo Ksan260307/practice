@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>UCD-F_ABC & IPDF City Car Simulation</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #dcedc8; color: #fff; font-family: monospace; }
+        canvas { display: block; }
+        #stats { 
+            position: absolute; top: 10px; left: 10px; 
+            background: rgba(0, 0, 0, 0.85); 
+            padding: 15px; border-radius: 8px;
+            pointer-events: auto; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            line-height: 1.5;
+            z-index: 10;
+            width: 260px;
+        }
+        .title { font-weight: bold; color: #a5d6a7; margin-bottom: 5px; }
+        .subtitle { font-size: 0.8em; color: #b0bec5; margin-bottom: 10px; display: block; }
+        input[type="range"] { width: 100%; margin: 10px 0; cursor: pointer; }
+        .stat-row { display: flex; justify-content: space-between; margin-bottom: 2px; }
+        button {
+            width: 100%; padding: 8px; margin-bottom: 10px;
+            background-color: #e53935; color: white; border: none;
+            border-radius: 4px; font-weight: bold; cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        button:hover { background-color: #ff5252; }
+    </style>
+</head>
+<body>
+    <div id="stats">
+        <div class="title">IPDF Core Enabled</div>
+        <span class="subtitle">Imaginary Phase Dynamics</span>
+        <button id="clearBtn">Clear All Cars</button>
+        <div style="border-bottom: 1px solid #555; padding-bottom: 10px; margin-bottom: 10px;">
+            <label style="font-size: 0.9em;">Traffic Volume: <span id="volumeValue" style="color:#ffb74d; font-weight:bold;">0</span> / 5000</label>
+            <input type="range" id="volumeSlider" min="0" max="5000" value="0">
+        </div>
+        <div id="statsText">Initializing...</div>
+    </div>
+    <canvas id="screen"></canvas>
+
+    <script>
+        // --- UCD-F_ABC & IPDF Framework Core Simulation ---
+        
+        const canvas = document.getElementById('screen');
+        const ctx = canvas.getContext('2d', { alpha: false });
+        const statsText = document.getElementById('statsText');
+        const volumeSlider = document.getElementById('volumeSlider');
+        const volumeValue = document.getElementById('volumeValue');
+        const clearBtn = document.getElementById('clearBtn');
+
+        const bgCanvas = document.createElement('canvas');
+        const bgCtx = bgCanvas.getContext('2d', { alpha: false });
+
+        let width = canvas.width = window.innerWidth;
+        let height = canvas.height = window.innerHeight;
+        
+        let numCols = 0;
+        let numRows = 0;
+
+        const MAX_ENTITIES = 5000; 
+        const FP_SHIFT = 16; 
+        const ONE_FP = 1 << FP_SHIFT;
+
+        const GRID_SIZE = 160;
+        const ROAD_WIDTH = 50;
+        const LANE_OFFSET = 14; 
+        const SPEED_DRIVE = 3.5 * ONE_FP;
+        const SPEED_PARK = 1.0 * ONE_FP;
+        const SPEED_ROGUE = 5.0 * ONE_FP; 
+        const STEER_FORCE = 0.4 * ONE_FP;
+        const BRAKE_FORCE = 0.6 * ONE_FP; 
+        const MAX_SPEED = 7.0 * ONE_FP;
+
+        const CELL_SIZE = 40;
+        const MAX_COLS = 100; 
+        const MAX_ROWS = 60;  
+        const headArray = new Int32Array(MAX_COLS * MAX_ROWS);
+        const nextArray = new Int32Array(MAX_ENTITIES);
+
+        let globalTrafficTimer = 0;
+
+        const EMOJI_CARS = ['🚗', '🚕', '🚙', '🏎️', '🚓', '🚑', '🚒', '🚐', '🛻', '🚚'];
+        const EMOJI_CITY = ['🏢', '🏬', '🏨', '🏫', '🌳', '🌲', '🏪', '🏦', '🏡', '⛲'];
+        const EMOJI_WRECK = '💥'; // 追加: 事故車の絵文字
+
+        const CAR_CACHE_SIZE = 32;
+        const carCaches = [];
+        let wreckCache = null;
+        
+        function initEmojiCaches() {
+            EMOJI_CARS.forEach(emoji => {
+                const c = document.createElement('canvas');
+                c.width = CAR_CACHE_SIZE; c.height = CAR_CACHE_SIZE;
+                const cCtx = c.getContext('2d');
+                cCtx.font = '24px sans-serif'; cCtx.textAlign = 'center'; cCtx.textBaseline = 'middle';
+                cCtx.fillText(emoji, CAR_CACHE_SIZE / 2, CAR_CACHE_SIZE / 2);
+                carCaches.push(c);
+            });
+            // 事故用キャッシュ
+            const wc = document.createElement('canvas');
+            wc.width = CAR_CACHE_SIZE; wc.height = CAR_CACHE_SIZE;
+            const wCtx = wc.getContext('2d');
+            wCtx.font = '24px sans-serif'; wCtx.textAlign = 'center'; wCtx.textBaseline = 'middle';
+            wCtx.fillText(EMOJI_WRECK, CAR_CACHE_SIZE / 2, CAR_CACHE_SIZE / 2);
+            wreckCache = wc;
+        }
+
+        // --- メモリレイアウト (Bit-packed SoA) ---
+        const stateBuffer = new Uint32Array(MAX_ENTITIES); // 0:Inactive, 1:Active, 2:Zero-Lock(事故)
+        const posXBuffer = new Int32Array(MAX_ENTITIES);
+        const posYBuffer = new Int32Array(MAX_ENTITIES);
+        const velXBuffer = new Int32Array(MAX_ENTITIES);
+        const velYBuffer = new Int32Array(MAX_ENTITIES);
+        const typeBuffer = new Uint8Array(MAX_ENTITIES);
+
+        const dirXBuffer = new Int8Array(MAX_ENTITIES);
+        const dirYBuffer = new Int8Array(MAX_ENTITIES);
+        const phaseBuffer = new Uint8Array(MAX_ENTITIES); 
+        const timerBuffer = new Int32Array(MAX_ENTITIES);
+        const targetXBuffer = new Int32Array(MAX_ENTITIES);
+        const targetYBuffer = new Int32Array(MAX_ENTITIES);
+        const turnIntentBuffer = new Int8Array(MAX_ENTITIES); 
+
+        const riskBuffer = new Uint8Array(MAX_ENTITIES); 
+        const ipdfPhaseBuffer = new Uint8Array(MAX_ENTITIES); 
+        const frustrationBuffer = new Uint16Array(MAX_ENTITIES); 
+
+        function setState(index, stateVal) {
+            stateBuffer[index] = (stateBuffer[index] & ~(0b111 << 24)) | ((stateVal & 0b111) << 24);
+        }
+        function getState(index) { return (stateBuffer[index] >> 24) & 0b111; }
+        function signFixed(val) { return val > 0 ? 1 : (val < 0 ? -1 : 0); }
+
+        function updateGridCache() {
+            numCols = Math.floor(width / GRID_SIZE) + 2;
+            numRows = Math.floor(height / GRID_SIZE) + 2;
+        }
+
+        function hasTrafficLight(gridX, gridY) {
+            let hash = Math.sin(gridX * 12.9898 + gridY * 78.233) * 43758.5453;
+            return (hash - Math.floor(hash)) < 0.15; 
+        }
+
+        function spawnCar(index) {
+            const side = Math.floor(Math.random() * 4); 
+            let px, py, dx, dy;
+
+            if (side === 0) { dx = 1; dy = 0; let by = Math.floor(Math.random() * numRows) - 1; py = by * GRID_SIZE + GRID_SIZE / 2 + LANE_OFFSET; px = -50; }
+            else if (side === 1) { dx = -1; dy = 0; let by = Math.floor(Math.random() * numRows) - 1; py = by * GRID_SIZE + GRID_SIZE / 2 - LANE_OFFSET; px = width + 50; }
+            else if (side === 2) { dx = 0; dy = 1; let bx = Math.floor(Math.random() * numCols) - 1; px = bx * GRID_SIZE + GRID_SIZE / 2 - LANE_OFFSET; py = -50; }
+            else { dx = 0; dy = -1; let bx = Math.floor(Math.random() * numCols) - 1; px = bx * GRID_SIZE + GRID_SIZE / 2 + LANE_OFFSET; py = height + 50; }
+
+            posXBuffer[index] = px << FP_SHIFT;
+            posYBuffer[index] = py << FP_SHIFT;
+            dirXBuffer[index] = dx; dirYBuffer[index] = dy;
+            phaseBuffer[index] = 0; timerBuffer[index] = 0; 
+            turnIntentBuffer[index] = 0; 
+            velXBuffer[index] = dx * SPEED_DRIVE; velYBuffer[index] = dy * SPEED_DRIVE;
+            typeBuffer[index] = Math.floor(Math.random() * EMOJI_CARS.length);
+            
+            riskBuffer[index] = 0;
+            ipdfPhaseBuffer[index] = 0;
+            frustrationBuffer[index] = 0; 
+            setState(index, 1); 
+        }
+
+        function generateCityBackground() {
+            bgCanvas.width = width; bgCanvas.height = height;
+            bgCtx.fillStyle = '#dcedc8'; bgCtx.fillRect(0, 0, width, height);
+            bgCtx.fillStyle = '#b0bec5'; 
+            
+            for(let x = -GRID_SIZE/2; x < width + GRID_SIZE; x += GRID_SIZE) {
+                bgCtx.fillRect(x - ROAD_WIDTH/2, 0, ROAD_WIDTH, height);
+                bgCtx.fillStyle = '#eceff1'; bgCtx.fillRect(x - 2, 0, 4, height); 
+                bgCtx.fillRect(x - ROAD_WIDTH/2, GRID_SIZE/2 - ROAD_WIDTH/2 - 10, ROAD_WIDTH/2, 4);
+                bgCtx.fillRect(x + 2, GRID_SIZE/2 + ROAD_WIDTH/2 + 6, ROAD_WIDTH/2 - 2, 4);
+                bgCtx.fillStyle = '#b0bec5';
+            }
+            for(let y = -GRID_SIZE/2; y < height + GRID_SIZE; y += GRID_SIZE) {
+                bgCtx.fillRect(0, y - ROAD_WIDTH/2, width, ROAD_WIDTH);
+                bgCtx.fillStyle = '#eceff1'; bgCtx.fillRect(0, y - 2, width, 4); 
+                bgCtx.fillRect(GRID_SIZE/2 + ROAD_WIDTH/2 + 6, y - ROAD_WIDTH/2, 4, ROAD_WIDTH/2 - 2);
+                bgCtx.fillRect(GRID_SIZE/2 - ROAD_WIDTH/2 - 10, y + 2, 4, ROAD_WIDTH/2);
+                bgCtx.fillStyle = '#b0bec5';
+            }
+            
+            bgCtx.font = '36px sans-serif'; bgCtx.textAlign = 'center'; bgCtx.textBaseline = 'middle';
+            const buildingCount = Math.floor((width * height) / 10000);
+            
+            for (let i = 0; i < buildingCount; i++) {
+                let bx = Math.random() * width; let by = Math.random() * height;
+                const inRoadX = Math.abs((bx % GRID_SIZE) - (GRID_SIZE/2)) > (ROAD_WIDTH/2 + 25);
+                const inRoadY = Math.abs((by % GRID_SIZE) - (GRID_SIZE/2)) > (ROAD_WIDTH/2 + 25);
+                if (inRoadX && inRoadY) {
+                    bgCtx.shadowColor = 'rgba(0,0,0,0.2)'; bgCtx.shadowBlur = 4; bgCtx.shadowOffsetY = 3;
+                    const building = EMOJI_CITY[Math.floor(Math.random() * EMOJI_CITY.length)];
+                    bgCtx.fillText(building, bx, by); bgCtx.shadowColor = 'transparent';
+                }
+            }
+        }
+
+        function init() {
+            initEmojiCaches();
+            updateGridCache();
+            generateCityBackground();
+            for (let i = 0; i < MAX_ENTITIES; i++) setState(i, 0); 
+            volumeSlider.value = 0;
+            
+            clearBtn.addEventListener('click', () => {
+                for (let i = 0; i < MAX_ENTITIES; i++) setState(i, 0);
+            });
+        }
+
+        function getTrafficLight(cx, cy, dirX, dirY) {
+            let gridX = Math.floor(cx / GRID_SIZE); let gridY = Math.floor(cy / GRID_SIZE);
+            if (!hasTrafficLight(gridX, gridY)) return 'NONE'; 
+            let offset = (gridX * 3 + gridY * 5) * 100; 
+            let t = (globalTrafficTimer + offset) % 600;
+            
+            if (dirX !== 0) { 
+                if (t < 250) return 'G'; if (t < 300) return 'Y'; return 'R';
+            } else { 
+                if (t >= 300 && t < 550) return 'G'; if (t >= 550) return 'Y'; return 'R';
+            }
+        }
+
+        function update() {
+            globalTrafficTimer++;
+            let activeCount = 0;
+            let exploreCount = 0;
+            let adaptCount = 0;
+            let stableCount = 0;
+            let stopCount = 0;
+            let rogueCount = 0;
+            let wreckCount = 0; // 追加: 事故車カウント
+
+            let targetVolume = parseInt(volumeSlider.value);
+            volumeValue.innerText = targetVolume;
+
+            headArray.fill(-1);
+            let cols = Math.min(MAX_COLS, Math.ceil(width / CELL_SIZE));
+            let rows = Math.min(MAX_ROWS, Math.ceil(height / CELL_SIZE));
+
+            // --- 空間ハッシュ登録 (アクティブ & 事故車) ---
+            for (let i = 0; i < MAX_ENTITIES; i++) {
+                let state = getState(i);
+                if (state === 0) continue;
+                let px = posXBuffer[i] >> FP_SHIFT;
+                let py = posYBuffer[i] >> FP_SHIFT;
+                
+                // LOD: 画面外の車は空間ハッシュから除外 (Probability Cloudへの圧縮)
+                let isVisible = (px >= -100 && px <= width + 100 && py >= -100 && py <= height + 100);
+                if (!isVisible && state !== 2) continue;
+
+                let c = Math.max(0, Math.min(cols - 1, Math.floor(px / CELL_SIZE)));
+                let r = Math.max(0, Math.min(rows - 1, Math.floor(py / CELL_SIZE)));
+                let idx = r * MAX_COLS + c;
+                nextArray[i] = headArray[idx];
+                headArray[idx] = i;
+            }
+
+            // --- メイン更新パス ---
+            for (let i = 0; i < MAX_ENTITIES; i++) {
+                let state = getState(i);
+                if (state === 0) continue; 
+                
+                const px = posXBuffer[i] >> FP_SHIFT;
+                const py = posYBuffer[i] >> FP_SHIFT;
+
+                // --- Zero-Lock (大破・地形化) 車両の処理 ---
+                if (state === 2) {
+                    wreckCount++;
+                    if (timerBuffer[i] > 0) {
+                        timerBuffer[i]--;
+                        if (timerBuffer[i] === 0) setState(i, 0); // 時間経過でレッカー撤去
+                    }
+                    continue; // 物理更新はスキップ
+                }
+
+                activeCount++;
+
+                const vx = velXBuffer[i];
+                const vy = velYBuffer[i];
+                const dx = dirXBuffer[i];
+                const dy = dirYBuffer[i];
+                const phase = phaseBuffer[i];
+
+                let cx = Math.floor(px / GRID_SIZE) * GRID_SIZE + GRID_SIZE / 2;
+                let cy = Math.floor(py / GRID_SIZE) * GRID_SIZE + GRID_SIZE / 2;
+
+                // --- LOD制御: 画面外は簡易計算のみ (UCD-F) ---
+                let isVisible = (px >= -100 && px <= width + 100 && py >= -100 && py <= height + 100);
+                if (!isVisible) {
+                    posXBuffer[i] += velXBuffer[i]; posYBuffer[i] += velYBuffer[i];
+                    let isOut = false;
+                    if (px < -60) { posXBuffer[i] = (width + 60) * ONE_FP; isOut = true; }
+                    else if (px > width + 60) { posXBuffer[i] = -60 * ONE_FP; isOut = true; }
+                    if (py < -60) { posYBuffer[i] = (height + 60) * ONE_FP; isOut = true; }
+                    else if (py > height + 60) { posYBuffer[i] = -60 * ONE_FP; isOut = true; }
+                    if (isOut) {
+                        if (activeCount > targetVolume) { setState(i, 0); activeCount--; } 
+                        else if (phaseBuffer[i] !== 0) {
+                            phaseBuffer[i] = 0; frustrationBuffer[i] = 0;
+                            velXBuffer[i] = dirXBuffer[i] * SPEED_DRIVE; velYBuffer[i] = dirYBuffer[i] * SPEED_DRIVE;
+                        }
+                    }
+                    continue;
+                }
+
+                // --- 可視領域のフル演算 ---
+                let distToCx = px - cx;
+                let distToCy = py - cy;
+                let distToIntersect = dx !== 0 ? distToCx * dx : distToCy * dy; 
+
+                let isRogueProne = (i % 15 === 0);
+                if (phase === 0 && Math.abs(vx) < (SPEED_DRIVE >> 1) && Math.abs(vy) < (SPEED_DRIVE >> 1)) {
+                    if (isRogueProne && frustrationBuffer[i] < 60000) frustrationBuffer[i] += 2;
+                } else {
+                    if (frustrationBuffer[i] > 0) frustrationBuffer[i]--;
+                }
+
+                if (phase === 0) { // Driving Phase
+                    let projectedRisk = 0; 
+                    let oncomingConflict = false; 
+                    let crossingConflict = false; 
+                    let redLightFlag = false;
+
+                    let myCol = Math.max(0, Math.min(cols - 1, Math.floor(px / CELL_SIZE)));
+                    let myRow = Math.max(0, Math.min(rows - 1, Math.floor(py / CELL_SIZE)));
+                    
+                    let isRogue = ipdfPhaseBuffer[i] === 3;
+                    if (frustrationBuffer[i] > 400) isRogue = true;
+                    if (frustrationBuffer[i] === 0) isRogue = false;
+
+                    for (let r = myRow - 1; r <= myRow + 1; r++) {
+                        for (let c = myCol - 1; c <= myCol + 1; c++) {
+                            if (c >= 0 && c < cols && r >= 0 && r < rows) {
+                                let curr = headArray[r * MAX_COLS + c];
+                                while(curr !== -1) {
+                                    if (curr !== i) {
+                                        let currState = getState(curr);
+                                        let ox = posXBuffer[curr] >> FP_SHIFT;
+                                        let oy = posYBuffer[curr] >> FP_SHIFT;
+                                        let odx = dirXBuffer[curr];
+                                        let ody = dirYBuffer[curr];
+                                        let distX = px - ox;
+                                        let distY = py - oy;
+                                        let distSq = distX * distX + distY * distY;
+
+                                        // 事故・地形化判定 (Zero-Lock)
+                                        if (currState === 1 && distSq < 144 && (isRogue || ipdfPhaseBuffer[curr] === 3) && Math.random() < 0.05) {
+                                            setState(i, 2); setState(curr, 2);
+                                            timerBuffer[i] = 400 + Math.floor(Math.random() * 400); // 撤去タイマー
+                                            timerBuffer[curr] = 400 + Math.floor(Math.random() * 400);
+                                            velXBuffer[i] = 0; velYBuffer[i] = 0;
+                                            velXBuffer[curr] = 0; velYBuffer[curr] = 0;
+                                        }
+
+                                        // 物理的重なり反発
+                                        if (currState === 1 && distSq > 0 && distSq < 576) { 
+                                            velXBuffer[i] += (distX * ONE_FP) >> 4;
+                                            velYBuffer[i] += (distY * ONE_FP) >> 4;
+                                            posXBuffer[i] += (signFixed(distX) * ONE_FP) >> 1;
+                                            posYBuffer[i] += (signFixed(distY) * ONE_FP) >> 1;
+                                        }
+
+                                        // IPDF 事故車回避 (セーフドリフトによる迂回)
+                                        if (currState === 2 && distSq < 8000) {
+                                            let dot = (-distX) * dx + (-distY) * dy;
+                                            if (dot > 0) { // 事故車が前方にある
+                                                projectedRisk = ONE_FP;
+                                                let perpX = -dy; let perpY = dx;
+                                                let avoidForce = (8000 - distSq) * ONE_FP / 8000;
+                                                let sideDot = (-distX) * perpX + (-distY) * perpY;
+                                                let dodgeDir = sideDot > 0 ? -1 : 1; // 避ける方向
+                                                velXBuffer[i] += dodgeDir * perpX * (avoidForce >> 4);
+                                                velYBuffer[i] += dodgeDir * perpY * (avoidForce >> 4);
+                                            }
+                                        }
+
+                                        // 通常の前方車両リスク
+                                        if (currState === 1 && distSq < 4000) {
+                                            let dot = (-distX) * dx + (-distY) * dy;
+                                            if (dot > 10) {
+                                                let riskVal = ONE_FP - ((distSq * ONE_FP) / 4000 | 0);
+                                                if (riskVal > projectedRisk) projectedRisk = riskVal;
+                                            }
+                                        }
+
+                                        if (currState === 1 && turnIntentBuffer[i] === 1 && (odx === -dx && ody === -dy)) {
+                                            if (turnIntentBuffer[curr] !== 1) { 
+                                                let oDistToCx = ox - cx; let oDistToCy = oy - cy;
+                                                if (oDistToCx*oDistToCx + oDistToCy*oDistToCy < 10000) {
+                                                    let dot = (px - ox) * odx + (py - oy) * ody;
+                                                    if (dot > 0) { oncomingConflict = true; projectedRisk = ONE_FP; }
+                                                }
+                                            }
+                                        }
+
+                                        if (currState === 1 && ((dx !== 0 && ody !== 0) || (dy !== 0 && odx !== 0))) {
+                                            let oDistToCx = ox - cx; let oDistToCy = oy - cy;
+                                            if (oDistToCx*oDistToCx + oDistToCy*oDistToCy < 6400) {
+                                                let myDistToCenter = distToCx*dx + distToCy*dy; 
+                                                let oDistToCenter = oDistToCx*odx + oDistToCy*ody;
+                                                if (myDistToCenter < oDistToCenter) { crossingConflict = true; projectedRisk = ONE_FP; }
+                                            }
+                                        }
+                                    }
+                                    curr = nextArray[curr];
+                                }
+                            }
+                        }
+                    }
+
+                    // 大破状態へ移行した場合はこれ以上の処理をスキップ
+                    if (getState(i) === 2) continue; 
+
+                    if (distToIntersect > -130 && distToIntersect < -110 && turnIntentBuffer[i] === 0) {
+                        let r = Math.random();
+                        if (r < 0.25) turnIntentBuffer[i] = -1; 
+                        else if (r < 0.5) turnIntentBuffer[i] = 1;  
+                        else turnIntentBuffer[i] = 2; 
+                    }
+
+                    if (distToIntersect > -70 && distToIntersect < -20) {
+                        let light = getTrafficLight(cx, cy, dx, dy);
+                        if (light === 'R' || light === 'Y') {
+                            redLightFlag = true; projectedRisk = ONE_FP;
+                        } else if (light === 'NONE') {
+                            if (crossingConflict) { projectedRisk = ONE_FP; } 
+                            else { if (projectedRisk < (ONE_FP >> 1)) projectedRisk = ONE_FP >> 1; }
+                        }
+                    }
+                    if (distToIntersect > -30 && distToIntersect < 20 && turnIntentBuffer[i] === 1) {
+                        if (oncomingConflict) projectedRisk = ONE_FP;
+                    }
+
+                    let currentPhase = 0; 
+                    if (isRogue) {
+                        let isHighSpeed = (Math.abs(vx) > (SPEED_DRIVE >> 1) || Math.abs(vy) > (SPEED_DRIVE >> 1));
+                        let isAwayFromIntersection = Math.abs(distToCx) > 60 && Math.abs(distToCy) > 60;
+                        if (isHighSpeed && isAwayFromIntersection && (projectedRisk < (ONE_FP * 0.4 | 0) || Math.random() < 0.02)) {
+                            frustrationBuffer[i] = 0; isRogue = false;
+                        } else { currentPhase = 3; }
+                    }
+                    
+                    if (!isRogue) {
+                        if (projectedRisk > (ONE_FP * 0.8 | 0)) currentPhase = 2; 
+                        else if (projectedRisk > (ONE_FP * 0.3 | 0)) currentPhase = 1; 
+                    }
+                    
+                    ipdfPhaseBuffer[i] = currentPhase;
+                    riskBuffer[i] = (projectedRisk * 255 / ONE_FP) | 0;
+
+                    let targetSpeedX = 0, targetSpeedY = 0;
+                    let isBraking = false;
+                    
+                    if (currentPhase === 3) {
+                        targetSpeedX = dx * SPEED_ROGUE; targetSpeedY = dy * SPEED_ROGUE; rogueCount++;
+                    } else if (currentPhase === 2) {
+                        if (redLightFlag || crossingConflict || oncomingConflict) { targetSpeedX = 0; targetSpeedY = 0; stopCount++; } 
+                        else { targetSpeedX = dx * (SPEED_DRIVE >> 3); targetSpeedY = dy * (SPEED_DRIVE >> 3); stableCount++; }
+                        isBraking = true;
+                    } else if (currentPhase === 1) {
+                        targetSpeedX = dx * (SPEED_DRIVE >> 1); targetSpeedY = dy * (SPEED_DRIVE >> 1); adaptCount++; isBraking = true; 
+                    } else {
+                        targetSpeedX = dx * SPEED_DRIVE; targetSpeedY = dy * SPEED_DRIVE; exploreCount++;
+                    }
+
+                    if (timerBuffer[i] === 0 && Math.abs(distToCx) < 15 && Math.abs(distToCy) < 15 && turnIntentBuffer[i] !== 0) {
+                        let intent = turnIntentBuffer[i];
+                        if (intent === -1) { dirXBuffer[i] = dy; dirYBuffer[i] = -dx; } 
+                        else if (intent === 1) { dirXBuffer[i] = -dy; dirYBuffer[i] = dx; } 
+                        timerBuffer[i] = 40; turnIntentBuffer[i] = 0; 
+                    }
+                    if (timerBuffer[i] > 0) timerBuffer[i]--;
+
+                    if (timerBuffer[i] === 0 && Math.abs(distToCx) > 80 && Math.abs(distToCy) > 80 && turnIntentBuffer[i] === 0 && Math.random() < 0.002 && !isRogue) {
+                        phaseBuffer[i] = 1; timerBuffer[i] = 30;
+                        let isDeepPark = Math.random() < 0.5; 
+                        let offsetSide = isDeepPark ? 75 : 45; 
+                        let offsetForward = isDeepPark ? 30 : 10;
+                        let sideDir = Math.random() < 0.5 ? 1 : -1; 
+                        if (dx !== 0) { targetXBuffer[i] = px + dx * offsetForward; targetYBuffer[i] = cy + sideDir * offsetSide; } 
+                        else { targetXBuffer[i] = cx + sideDir * offsetSide; targetYBuffer[i] = py + dy * offsetForward; }
+                    }
+
+                    if (isRogue && phaseBuffer[i] === 0) {
+                        if (turnIntentBuffer[i] !== 0 && distToIntersect > -80 && distToIntersect < -20 && Math.random() < 0.05) {
+                            phaseBuffer[i] = 5;
+                            let intent = turnIntentBuffer[i];
+                            let newDx = intent === -1 ? dy : (intent === 1 ? -dy : dx);
+                            let newDy = intent === -1 ? -dx : (intent === 1 ? dx : dy);
+                            targetXBuffer[i] = cx + newDx * (GRID_SIZE / 2 + 20); targetYBuffer[i] = cy + newDy * (GRID_SIZE / 2 + 20);
+                            dirXBuffer[i] = newDx; dirYBuffer[i] = newDy;
+                            turnIntentBuffer[i] = 0;
+                        } 
+                        else if (projectedRisk > (ONE_FP * 0.5 | 0) && Math.random() < 0.05) {
+                            phaseBuffer[i] = 5;
+                            let sideDir = Math.random() < 0.5 ? 1 : -1;
+                            if (dx !== 0) { targetXBuffer[i] = px + dx * 160; targetYBuffer[i] = cy + sideDir * 80; } 
+                            else { targetXBuffer[i] = cx + sideDir * 80; targetYBuffer[i] = py + dy * 160; }
+                        }
+                    }
+
+                    if (phaseBuffer[i] === 0) {
+                        if (dx !== 0) {
+                            let currentLaneOffset = isRogue ? -LANE_OFFSET : LANE_OFFSET;
+                            let laneY = cy + (dx > 0 ? -currentLaneOffset : currentLaneOffset);
+                            let diffY = ((laneY << FP_SHIFT) - posYBuffer[i]);
+                            velYBuffer[i] += signFixed(diffY) * STEER_FORCE;
+                            velYBuffer[i] -= (velYBuffer[i] >> 2); 
+                            let force = isBraking ? BRAKE_FORCE : STEER_FORCE;
+                            velXBuffer[i] += signFixed(targetSpeedX - vx) * force;
+                            velXBuffer[i] -= (velXBuffer[i] >> (isBraking ? 2 : 4)); 
+                        } else {
+                            let currentLaneOffset = isRogue ? -LANE_OFFSET : LANE_OFFSET;
+                            let laneX = cx + (dy > 0 ? currentLaneOffset : -currentLaneOffset);
+                            let diffX = ((laneX << FP_SHIFT) - posXBuffer[i]);
+                            velXBuffer[i] += signFixed(diffX) * STEER_FORCE;
+                            velXBuffer[i] -= (velXBuffer[i] >> 2); 
+                            let force = isBraking ? BRAKE_FORCE : STEER_FORCE;
+                            velYBuffer[i] += signFixed(targetSpeedY - vy) * force;
+                            velYBuffer[i] -= (velYBuffer[i] >> (isBraking ? 2 : 4)); 
+                        }
+                    }
+
+                } else if (phase === 5) {
+                    let tx = targetXBuffer[i]; let ty = targetYBuffer[i];
+                    let pxDiffX = tx - (posXBuffer[i] >> FP_SHIFT); let pxDiffY = ty - (posYBuffer[i] >> FP_SHIFT);
+                    let manhattanDist = Math.abs(pxDiffX) + Math.abs(pxDiffY);
+                    
+                    if (manhattanDist > 10) { 
+                        velXBuffer[i] = Math.floor((pxDiffX * SPEED_ROGUE) / manhattanDist);
+                        velYBuffer[i] = Math.floor((pxDiffY * SPEED_ROGUE) / manhattanDist);
+                        rogueCount++;
+                    } else { 
+                        phaseBuffer[i] = 0; frustrationBuffer[i] = 0; 
+                        velXBuffer[i] = dirXBuffer[i] * SPEED_DRIVE; velYBuffer[i] = dirYBuffer[i] * SPEED_DRIVE;
+                    }
+                } else {
+                    let tx = targetXBuffer[i]; let ty = targetYBuffer[i];
+                    let diffX = (tx << FP_SHIFT) - posXBuffer[i]; let diffY = (ty << FP_SHIFT) - posYBuffer[i];
+                    let pxDiffX = diffX >> FP_SHIFT; let pxDiffY = diffY >> FP_SHIFT;
+
+                    if (phase === 1) { 
+                        velXBuffer[i] -= (velXBuffer[i] >> 3); velYBuffer[i] -= (velYBuffer[i] >> 3);
+                        timerBuffer[i]--; if (timerBuffer[i] <= 0) phaseBuffer[i] = 2;
+                    } else if (phase === 2) { 
+                        velXBuffer[i] = Math.abs(pxDiffX) < 2 ? diffX >> 2 : signFixed(diffX) * SPEED_PARK; 
+                        velYBuffer[i] = Math.abs(pxDiffY) < 2 ? diffY >> 2 : signFixed(diffY) * SPEED_PARK;
+                        if (Math.abs(pxDiffX) < 1 && Math.abs(pxDiffY) < 1) {
+                            velXBuffer[i] = 0; velYBuffer[i] = 0; phaseBuffer[i] = 3; 
+                            timerBuffer[i] = 120 + Math.random() * 200; 
+                        }
+                    } else if (phase === 3) { 
+                        timerBuffer[i]--;
+                        if (timerBuffer[i] <= 0) {
+                            phaseBuffer[i] = 4;
+                            if (dx !== 0) { targetXBuffer[i] = px + dx * 20; targetYBuffer[i] = cy + (dx > 0 ? -LANE_OFFSET : LANE_OFFSET); } 
+                            else { targetXBuffer[i] = cx + (dy > 0 ? LANE_OFFSET : -LANE_OFFSET); targetYBuffer[i] = py + dy * 20; }
+                        }
+                    } else if (phase === 4) { 
+                        velXBuffer[i] = Math.abs(pxDiffX) < 2 ? diffX >> 2 : signFixed(diffX) * SPEED_PARK; 
+                        velYBuffer[i] = Math.abs(pxDiffY) < 2 ? diffY >> 2 : signFixed(diffY) * SPEED_PARK;
+                        if (Math.abs(pxDiffX) < 2 && Math.abs(pxDiffY) < 2) { phaseBuffer[i] = 0; timerBuffer[i] = 40; }
+                    }
+                }
+
+                if (velXBuffer[i] > MAX_SPEED) velXBuffer[i] = MAX_SPEED;
+                else if (velXBuffer[i] < -MAX_SPEED) velXBuffer[i] = -MAX_SPEED;
+                if (velYBuffer[i] > MAX_SPEED) velYBuffer[i] = MAX_SPEED;
+                else if (velYBuffer[i] < -MAX_SPEED) velYBuffer[i] = -MAX_SPEED;
+
+                posXBuffer[i] += velXBuffer[i]; posYBuffer[i] += velYBuffer[i];
+                
+                let isOut = false;
+                if (posXBuffer[i] < -60 * ONE_FP) { posXBuffer[i] = (width + 60) * ONE_FP; isOut = true; }
+                else if (posXBuffer[i] > (width + 60) * ONE_FP) { posXBuffer[i] = -60 * ONE_FP; isOut = true; }
+                if (posYBuffer[i] < -60 * ONE_FP) { posYBuffer[i] = (height + 60) * ONE_FP; isOut = true; }
+                else if (posYBuffer[i] > (height + 60) * ONE_FP) { posYBuffer[i] = -60 * ONE_FP; isOut = true; }
+
+                if (isOut) {
+                    if (activeCount > targetVolume) {
+                        setState(i, 0); activeCount--;
+                    } else {
+                        if (phaseBuffer[i] !== 0) {
+                            phaseBuffer[i] = 0; frustrationBuffer[i] = 0;
+                            velXBuffer[i] = dirXBuffer[i] * SPEED_DRIVE; velYBuffer[i] = dirYBuffer[i] * SPEED_DRIVE;
+                        }
+                    }
+                }
+            }
+
+            if (activeCount < targetVolume) {
+                let spawnCount = Math.min(targetVolume - activeCount, 10);
+                for (let i = 0; i < MAX_ENTITIES && spawnCount > 0; i++) {
+                    if (getState(i) === 0) { spawnCar(i); spawnCount--; activeCount++; }
+                }
+            }
+
+            statsText.innerHTML = `
+                Active Entities: <span style="color:#aed581; font-weight:bold;">${activeCount}</span><br>
+                <hr style="border:0; border-top:1px solid #555; margin: 8px 0;">
+                <div class="stat-row"><span>Explore (探索):</span> <span style="color:#4dd0e1">${exploreCount}</span></div>
+                <div class="stat-row"><span>Adapt (適応):</span> <span style="color:#ffb74d">${adaptCount}</span></div>
+                <div class="stat-row"><span>Safe Drift (徐行):</span> <span style="color:#ff5252">${stableCount}</span></div>
+                <div class="stat-row"><span>Halt (停止):</span> <span style="color:#9e9e9e">${stopCount}</span></div>
+                <div class="stat-row" style="margin-top:5px; font-weight:bold;"><span>Rogue (暴走):</span> <span style="color:#ab47bc">${rogueCount}</span></div>
+                <div class="stat-row" style="font-weight:bold;"><span>Wrecks (事故):</span> <span style="color:#757575">${wreckCount}</span></div>
+            `;
+        }
+
+        // --- 描画アダプタ ---
+        function render() {
+            ctx.drawImage(bgCanvas, 0, 0);
+
+            for (let cx = GRID_SIZE/2; cx < width + GRID_SIZE; cx += GRID_SIZE) {
+                for (let cy = GRID_SIZE/2; cy < height + GRID_SIZE; cy += GRID_SIZE) {
+                    let gridX = Math.floor(cx / GRID_SIZE); let gridY = Math.floor(cy / GRID_SIZE);
+                    if (!hasTrafficLight(gridX, gridY)) continue;
+
+                    let offset = (gridX * 3 + gridY * 5) * 100;
+                    let t = (globalTrafficTimer + offset) % 600;
+
+                    let colorX = t < 250 ? '#00e676' : (t < 300 ? '#ffea00' : '#ff1744');
+                    let colorY = (t >= 300 && t < 550) ? '#00e676' : (t >= 550 ? '#ffea00' : '#ff1744');
+
+                    ctx.fillStyle = '#263238'; ctx.fillRect(cx - 30, cy - 35, 12, 12);
+                    ctx.fillStyle = colorY; ctx.beginPath(); ctx.arc(cx - 24, cy - 29, 4, 0, Math.PI*2); ctx.fill();
+                    
+                    ctx.fillStyle = '#263238'; ctx.fillRect(cx + 18, cy + 23, 12, 12);
+                    ctx.fillStyle = colorY; ctx.beginPath(); ctx.arc(cx + 24, cy + 29, 4, 0, Math.PI*2); ctx.fill();
+
+                    ctx.fillStyle = '#263238'; ctx.fillRect(cx - 35, cy + 18, 12, 12);
+                    ctx.fillStyle = colorX; ctx.beginPath(); ctx.arc(cx - 29, cy + 24, 4, 0, Math.PI*2); ctx.fill();
+
+                    ctx.fillStyle = '#263238'; ctx.fillRect(cx + 23, cy - 30, 12, 12);
+                    ctx.fillStyle = colorX; ctx.beginPath(); ctx.arc(cx + 29, cy - 24, 4, 0, Math.PI*2); ctx.fill();
+                }
+            }
+
+            for (let i = 0; i < MAX_ENTITIES; i++) {
+                let state = getState(i);
+                if (state === 0) continue;
+
+                const x = posXBuffer[i] >> FP_SHIFT;
+                const y = posYBuffer[i] >> FP_SHIFT;
+                if (x < -30 || x > width + 30 || y < -30 || y > height + 30) continue;
+
+                ctx.save();
+                ctx.translate(x, y);
+
+                if (state === 2) {
+                    // 大破(Zero-Lock)の描画
+                    ctx.globalAlpha = 0.8;
+                    ctx.drawImage(wreckCache, -CAR_CACHE_SIZE / 2, -CAR_CACHE_SIZE / 2);
+                    ctx.globalAlpha = 1.0;
+                } else {
+                    // 通常車両の描画
+                    const dx = dirXBuffer[i];
+                    const dy = dirYBuffer[i];
+                    let targetAngle = 0;
+                    let flip = false;
+
+                    if (phaseBuffer[i] === 5) {
+                        flip = false;
+                        targetAngle = Math.atan2(velYBuffer[i], velXBuffer[i]) + Math.PI;
+                    } else {
+                        if (dx > 0) { flip = true; targetAngle = 0; } 
+                        else if (dx < 0) { flip = false; targetAngle = 0; }
+                        else if (dy > 0) { flip = false; targetAngle = -Math.PI / 2; } 
+                        else if (dy < 0) { flip = false; targetAngle = Math.PI / 2; } 
+                    }
+
+                    if (targetAngle !== 0) ctx.rotate(targetAngle);
+                    if (flip) ctx.scale(-1, 1);
+                    
+                    if (phaseBuffer[i] === 3) ctx.globalAlpha = 0.6;
+                    
+                    ctx.drawImage(carCaches[typeBuffer[i]], -CAR_CACHE_SIZE / 2, -CAR_CACHE_SIZE / 2);
+                    
+                    let intent = turnIntentBuffer[i];
+                    if ((intent === -1 || intent === 1) && phaseBuffer[i] === 0) {
+                        if ((globalTrafficTimer % 30) < 15) {
+                            ctx.fillStyle = '#ff9800'; 
+                            ctx.beginPath();
+                            if (intent === -1) {
+                                ctx.arc(12, 8, 3, 0, Math.PI*2); ctx.arc(-12, 8, 3, 0, Math.PI*2); 
+                            } else {
+                                ctx.arc(12, -8, 3, 0, Math.PI*2); ctx.arc(-12, -8, 3, 0, Math.PI*2);
+                            }
+                            ctx.fill();
+                        }
+                    }
+
+                    let ipdfPhase = ipdfPhaseBuffer[i];
+                    if (phaseBuffer[i] === 0 || phaseBuffer[i] === 5) { 
+                        ctx.beginPath();
+                        if (ipdfPhase === 3 || phaseBuffer[i] === 5) {
+                            if ((globalTrafficTimer % 10) < 5) {
+                                ctx.fillStyle = 'rgba(171, 71, 188, 0.9)'; 
+                                ctx.arc(12, 6, 3, 0, Math.PI*2); ctx.arc(12, -6, 3, 0, Math.PI*2);
+                                ctx.fill();
+                            }
+                        } else if (ipdfPhase === 2) { 
+                            ctx.fillStyle = 'rgba(255, 0, 0, 0.9)'; 
+                            ctx.arc(12, 6, 2.5, 0, Math.PI*2); ctx.arc(12, -6, 2.5, 0, Math.PI*2);
+                            ctx.fill();
+                        } else if (ipdfPhase === 1) { 
+                            ctx.fillStyle = 'rgba(255, 152, 0, 0.8)'; 
+                            ctx.arc(12, 6, 2, 0, Math.PI*2); ctx.arc(12, -6, 2, 0, Math.PI*2);
+                            ctx.fill();
+                        }
+                    }
+                }
+                ctx.restore();
+            }
+        }
+
+        function loop() {
+            update();
+            render();
+            requestAnimationFrame(loop);
+        }
+
+        window.addEventListener('resize', () => {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            updateGridCache();
+            generateCityBackground();
+        });
+
+        init();
+        loop();
+
+    </script>
+</body>
+</html>
