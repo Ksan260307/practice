@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Axiom Universe - 星の観測シミュレーター</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050510; color: white; font-family: sans-serif; touch-action: none; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 0; }
+        
+        /* UI Layer */
+        #ui-layer {
+            position: absolute;
+            bottom: 0; left: 0; width: 100%;
+            pointer-events: none;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            height: 100vh;
+        }
+
+        .panel {
+            pointer-events: auto;
+            background: rgba(15, 20, 35, 0.85);
+            backdrop-filter: blur(8px);
+            border-top: 1px solid rgba(255,255,255,0.1);
+            padding: 1.5rem;
+            border-radius: 20px 20px 0 0;
+            box-shadow: 0 -10px 30px rgba(0,0,0,0.5);
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .dialog-box {
+            pointer-events: auto;
+            background: rgba(40, 50, 80, 0.9);
+            border: 1px solid rgba(100, 150, 255, 0.3);
+            border-radius: 12px;
+            padding: 1rem;
+            margin: 1rem;
+            font-size: 0.9rem;
+            line-height: 1.4;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            max-width: 400px;
+        }
+
+        /* Custom Range Slider */
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 20px; width: 20px;
+            border-radius: 50%;
+            background: #60a5fa;
+            cursor: pointer;
+            margin-top: -8px;
+            box-shadow: 0 0 10px rgba(96, 165, 250, 0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px;
+            cursor: pointer;
+            background: #374151;
+            border-radius: 2px;
+        }
+        input[type=range]:focus { outline: none; }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+
+    <div id="ui-layer">
+        <!-- AIアシスタント ダイアログ (PDE層の翻訳) -->
+        <div class="dialog-box" id="ai-dialog">
+            <strong>案内AI：</strong><br>
+            <span id="dialog-text">星たちが波を出して干渉しあっています。波が強く重なる場所では、相対性理論の新しい解釈により「時間の進み方」が変化するんですよ。スライダーを動かして宇宙を観察してみましょう。</span>
+        </div>
+
+        <!-- コントロールパネル -->
+        <div class="panel">
+            <h2 class="text-lg font-bold mb-4 text-blue-300">観測コントローラー</h2>
+            
+            <div class="mb-4">
+                <div class="flex justify-between text-sm mb-1">
+                    <span>宇宙のテンポ (Time)</span>
+                    <span id="val-tempo">標準</span>
+                </div>
+                <input type="range" id="slider-tempo" min="0" max="2" step="0.1" value="1">
+            </div>
+
+            <div class="mb-4">
+                <div class="flex justify-between text-sm mb-1">
+                    <span>空間のゆらぎ (Wave)</span>
+                    <span id="val-wave">中</span>
+                </div>
+                <input type="range" id="slider-wave" min="0" max="2" step="0.1" value="1">
+            </div>
+
+            <div class="mb-2">
+                <div class="flex justify-between text-sm mb-1">
+                    <span>星たちの引力 (Gravity)</span>
+                    <span id="val-gravity">中</span>
+                </div>
+                <input type="range" id="slider-gravity" min="0" max="2" step="0.1" value="0.5">
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- システム設計に基づくパラメータ ---
+        // UIの用語とは別に、内部ではADCの概念（Tick, Phase, Lifecycle等）を用いる
+        
+        const SYS = {
+            globalTick: 0,
+            timeScale: 1.0,      // ユーザー設定による全体の時間進行
+            waveStrength: 1.0,   // FBM (空間のゆらぎ) の強さ
+            gravityStrength: 0.5 // 星同士の干渉力
+        };
+
+        // ライフサイクル (CVM状態: 誕生, 成長, 充実, 変化, 完了, おやすみ)
+        const LIFECYCLE = [
+            { name: "誕生", color: 0x4ade80, size: 0.5 }, // 緑系
+            { name: "成長", color: 0x60a5fa, size: 1.0 }, // 青系
+            { name: "充実", color: 0xfacc15, size: 1.5 }, // 黄系
+            { name: "変化", color: 0xf87171, size: 1.2 }, // 赤系
+            { name: "完了", color: 0xffffff, size: 0.3 }, // 白（縮退）
+            { name: "おやすみ", color: 0x111111, size: 0.1} // 黒（Standby）
+        ];
+
+        let scene, camera, renderer;
+        let stars = [];
+        let spaceGrid;
+        
+        // --- UI イベントリスナー ---
+        document.getElementById('slider-tempo').addEventListener('input', (e) => {
+            SYS.timeScale = parseFloat(e.target.value);
+            document.getElementById('val-tempo').innerText = SYS.timeScale < 0.5 ? 'ゆっくり' : SYS.timeScale > 1.5 ? '高速' : '標準';
+            updateDialog();
+        });
+        document.getElementById('slider-wave').addEventListener('input', (e) => {
+            SYS.waveStrength = parseFloat(e.target.value);
+            document.getElementById('val-wave').innerText = SYS.waveStrength < 0.5 ? '静か' : SYS.waveStrength > 1.5 ? '激しい' : '中';
+            updateDialog();
+        });
+        document.getElementById('slider-gravity').addEventListener('input', (e) => {
+            SYS.gravityStrength = parseFloat(e.target.value);
+            document.getElementById('val-gravity').innerText = SYS.gravityStrength < 0.5 ? '弱い' : SYS.gravityStrength > 1.5 ? '強い' : '中';
+        });
+
+        function updateDialog() {
+            const textEl = document.getElementById('dialog-text');
+            if (SYS.timeScale > 1.5) {
+                textEl.innerText = "時間が加速しています！星々のライフサイクル（誕生からおやすみまで）が高速で展開されています。";
+            } else if (SYS.waveStrength > 1.5) {
+                textEl.innerText = "空間のゆらぎが最大化しています。隣り合う星の波が干渉し、局所的に「時間の進み方」が歪む様子が観察できます（新解釈）。";
+            } else {
+                textEl.innerText = "星々は互いに波を出し合い、波が重なる場所では特異的に「時間が早く/遅く」進みます。つながりを感じてみてください。";
+            }
+        }
+
+        // --- Three.js 初期化処理 ---
+        function initThreeJS() {
+            const container = document.getElementById('canvas-container');
+            
+            // Scene
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x050510, 0.02);
+
+            // Camera (Fixed mode: 固定視点を基本とする)
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 15, 30);
+            camera.lookAt(0, 0, 0);
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // スマホ最適化
+            container.appendChild(renderer.domElement);
+
+            // Lights
+            const ambientLight = new THREE.AmbientLight(0x404040);
+            scene.add(ambientLight);
+            const pointLight = new THREE.PointLight(0xffffff, 1, 100);
+            pointLight.position.set(10, 20, 10);
+            scene.add(pointLight);
+
+            // 空間のゆらぎを表現するグリッド (FBM層の可視化)
+            const gridGeo = new THREE.PlaneGeometry(60, 60, 40, 40);
+            gridGeo.rotateX(-Math.PI / 2);
+            const gridMat = new THREE.PointsMaterial({ color: 0x4a5568, size: 0.15 });
+            spaceGrid = new THREE.Points(gridGeo, gridMat);
+            scene.add(spaceGrid);
+
+            // 星（エンティティ）の生成
+            const starCount = 12; // スマホでの負荷を考慮し適度な数
+            const sphereGeo = new THREE.SphereGeometry(1, 32, 32);
+            
+            for (let i = 0; i < starCount; i++) {
+                const material = new THREE.MeshPhongMaterial({ 
+                    color: LIFECYCLE[0].color,
+                    emissive: LIFECYCLE[0].color,
+                    emissiveIntensity: 0.5,
+                    shininess: 100
+                });
+                const mesh = new THREE.Mesh(sphereGeo, material);
+                
+                // 初期の空間配置
+                mesh.position.set(
+                    (Math.random() - 0.5) * 40,
+                    (Math.random() - 0.5) * 5,
+                    (Math.random() - 0.5) * 30
+                );
+                
+                scene.add(mesh);
+
+                stars.push({
+                    mesh: mesh,
+                    originY: mesh.position.y,
+                    mass: 0.8 + Math.random() * 0.4, // エネルギー量
+                    phase: Math.random(), // CVDのリズム
+                    lifecycleIdx: Math.floor(Math.random() * LIFECYCLE.length), // CVM状態
+                    lifeProgress: Math.random(), // 現在のステージの進捗(0~1)
+                    localTimeScale: 1.0 // 干渉による局所時間
+                });
+            }
+
+            // リサイズ対応
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+        }
+
+        // --- メインシミュレーションループ ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // 1. 全体Tickの進行
+            const dt = 0.01 * SYS.timeScale;
+            SYS.globalTick += dt;
+
+            // 2. 空間のゆらぎ（FBM）の計算とグリッドの更新
+            const positions = spaceGrid.geometry.attributes.position.array;
+            
+            // 各頂点について、すべての星からの「波」の干渉を計算
+            for (let i = 0; i < positions.length; i += 3) {
+                const px = positions[i];
+                const pz = positions[i + 2];
+                let waveHeight = 0;
+
+                stars.forEach(star => {
+                    const dx = px - star.mesh.position.x;
+                    const dz = pz - star.mesh.position.z;
+                    const dist = Math.sqrt(dx * dx + dz * dz);
+                    
+                    // 距離による減衰と位相に基づく波
+                    if (dist < 20) {
+                        const wave = Math.sin(dist * 1.5 - SYS.globalTick * 3) * (1 / (dist + 1));
+                        waveHeight += wave * star.mass;
+                    }
+                });
+
+                positions[i + 1] = waveHeight * SYS.waveStrength * 2;
+            }
+            spaceGrid.geometry.attributes.position.needsUpdate = true;
+
+            // 3. 星（エンティティ）の状態更新（相対論的解釈の適用）
+            stars.forEach((star, i) => {
+                // 【相対性理論の新解釈ロジック】
+                // 自分の位置における「他の星からの波の干渉」を計算。
+                // 干渉がプラスに働く（波の山）と時間が加速し、マイナス（波の谷）だと時間が遅延する。
+                let interference = 0;
+                stars.forEach((otherStar, j) => {
+                    if (i !== j) {
+                        const dist = star.mesh.position.distanceTo(otherStar.mesh.position);
+                        if (dist < 15 && dist > 0) {
+                            interference += Math.sin(dist - SYS.globalTick * 2) / dist;
+                            
+                            // わずかな引力処理 (Gravity)
+                            const force = (SYS.gravityStrength * otherStar.mass) / (dist * dist);
+                            const dir = otherStar.mesh.position.clone().sub(star.mesh.position).normalize();
+                            star.mesh.position.add(dir.multiplyScalar(force * dt * 0.5));
+                        }
+                    }
+                });
+
+                // 局所的な時間の進み方 (Time Dilation) を決定
+                // ベースのテンポに、波の干渉（ゆらぎ）を掛け合わせる
+                star.localTimeScale = Math.max(0.1, SYS.timeScale + (interference * SYS.waveStrength));
+
+                // 星のリズム（CVD）の更新
+                star.phase += 0.05 * star.localTimeScale;
+                if (star.phase > Math.PI * 2) star.phase -= Math.PI * 2;
+
+                // 鼓動の表現 (Phaseに基づくスケール変化)
+                const pulse = 1.0 + Math.sin(star.phase) * 0.1;
+
+                // ライフサイクル（CVM）の進行
+                // おやすみ状態(Standby)以外は寿命が進む
+                if (star.lifecycleIdx !== 5) {
+                    star.lifeProgress += 0.002 * star.localTimeScale;
+                    if (star.lifeProgress >= 1.0) {
+                        star.lifeProgress = 0;
+                        star.lifecycleIdx++;
+                    }
+                } else {
+                    // おやすみ状態の場合は一定確率で再誕生（宇宙のエントロピー循環）
+                    if (Math.random() < 0.005 * SYS.timeScale) {
+                        star.lifecycleIdx = 0;
+                        star.lifeProgress = 0;
+                        // 位置を少しリセット
+                        star.mesh.position.y = (Math.random() - 0.5) * 5;
+                    }
+                }
+
+                // 視覚的反映（PDE層の翻訳）
+                const currentStage = LIFECYCLE[star.lifecycleIdx];
+                
+                // 色の補間（遷移中）
+                if (star.lifeProgress > 0 && star.lifecycleIdx < 5) {
+                    const nextStage = LIFECYCLE[star.lifecycleIdx + 1];
+                    const color1 = new THREE.Color(currentStage.color);
+                    const color2 = new THREE.Color(nextStage.color);
+                    star.mesh.material.color.lerpColors(color1, color2, star.lifeProgress);
+                    star.mesh.material.emissive.lerpColors(color1, color2, star.lifeProgress);
+                    
+                    const targetSize = currentStage.size * (1 - star.lifeProgress) + nextStage.size * star.lifeProgress;
+                    star.mesh.scale.setScalar(targetSize * star.mass * pulse);
+                } else {
+                    star.mesh.material.color.setHex(currentStage.color);
+                    star.mesh.material.emissive.setHex(currentStage.color);
+                    star.mesh.scale.setScalar(currentStage.size * star.mass * pulse);
+                }
+
+                // Y軸のゆるやかな浮遊
+                star.mesh.position.y += Math.sin(SYS.globalTick + i) * 0.02;
+            });
+
+            renderer.render(scene, camera);
+        }
+
+        // --- 起動処理 ---
+        window.onload = function () {
+            initThreeJS();
+            animate();
+        };
+    </script>
+</body>
+</html>
