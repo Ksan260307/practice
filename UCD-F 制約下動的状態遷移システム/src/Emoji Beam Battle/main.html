@@ -1,0 +1,969 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Emoji Beam Battle - UCD-F_ABC Engine</title>
+    <style>
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            background-color: #1a1a2e; overflow: hidden; font-family: sans-serif;
+            color: white; user-select: none;
+            touch-action: none; 
+        }
+        canvas {
+            display: block; width: 100%; height: 100%;
+        }
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+        }
+        #hud {
+            position: absolute; top: 10px; left: 10px;
+            background: rgba(0, 0, 0, 0.6); padding: 10px; border-radius: 8px;
+            pointer-events: auto;
+            font-size: 16px;
+        }
+        #start-screen {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(15, 15, 25, 0.9);
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            pointer-events: auto; z-index: 10;
+        }
+        .panel {
+            background: #16213e; padding: 30px; border-radius: 12px;
+            text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            max-width: 90%;
+        }
+        input[type="text"] {
+            font-size: 32px; width: 80px; text-align: center; padding: 10px;
+            border: 2px solid #e94560; border-radius: 8px; background: #0f3460; color: white;
+            margin: 10px 0;
+        }
+        .difficulty-select {
+            margin: 15px 0; display: flex; justify-content: center; gap: 10px; flex-wrap: wrap;
+        }
+        .difficulty-select input[type="radio"] { display: none; }
+        .diff-label {
+            display: inline-block; background: #0f3460; padding: 10px 15px; border-radius: 8px; 
+            cursor: pointer; border: 2px solid transparent; font-size: 16px; transition: 0.2s;
+        }
+        .difficulty-select input[type="radio"]:checked + .diff-label {
+            border-color: #e94560; background: #1a1a2e; color: #ff5e7e; font-weight: bold;
+        }
+        button {
+            background: #e94560; color: white; border: none; padding: 12px 24px;
+            font-size: 18px; font-weight: bold; border-radius: 8px; cursor: pointer;
+            transition: transform 0.1s, background 0.2s; margin-top: 15px;
+        }
+        button:hover { background: #ff5e7e; transform: scale(1.05); }
+        button:active { transform: scale(0.95); }
+        #game-over {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            font-size: 48px; font-weight: bold; color: #ffeb3b; text-shadow: 0 0 10px red;
+            display: none; text-align: center; pointer-events: auto;
+            background: rgba(0,0,0,0.8); padding: 40px; border-radius: 16px;
+        }
+        .controls-info {
+            margin-top: 20px; font-size: 14px; color: #a0a0a0; text-align: left;
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="ui-layer">
+        <div id="hud" style="display: none;">
+            <div>生存者: <span id="survivors-count">100</span> / <span id="max-players">100</span></div>
+            <div style="margin-top: 5px; color: #ff5e7e;">HP: <span id="player-hp">10</span> ❤️</div>
+            <div style="margin-top: 5px; color: #00fff5;">武器: <span id="player-lv">ノーマル (Lv.1)</span></div>
+            <div style="margin-top: 5px; color: #ffeb3b;">撃破数: <span id="player-kills">0</span></div>
+        </div>
+
+        <div id="game-over">
+            <div id="result-text">GAME OVER</div>
+            <button onclick="location.reload()">もう一度プレイ</button>
+        </div>
+    </div>
+
+    <div id="start-screen">
+        <div class="panel">
+            <h2>UCD-F_ABC Battle Arena</h2>
+            <p>君の「魂」となる絵文字を1つ選んでください</p>
+            <input type="text" id="emoji-input" value="😎" maxlength="2">
+            
+            <div class="difficulty-select">
+                <label>
+                    <input type="radio" name="diff" value="0">
+                    <span class="diff-label">Easy</span>
+                </label>
+                <label>
+                    <input type="radio" name="diff" value="1" checked>
+                    <span class="diff-label">Normal</span>
+                </label>
+                <label>
+                    <input type="radio" name="diff" value="2">
+                    <span class="diff-label">Hard</span>
+                </label>
+                <label>
+                    <input type="radio" name="diff" value="3">
+                    <span class="diff-label">Hell 🔥</span>
+                </label>
+            </div>
+
+            <button id="start-btn">戦場にダイブする (1 vs 99)</button>
+            <div class="controls-info">
+                <strong>[PC]</strong> 移動: WASD / 攻撃: マウスクリック(長押し)<br>
+                <strong>[スマホ]</strong> 左画面ドラッグ: 移動 / 右画面ドラッグ: 攻撃<br>
+                <br>
+                <strong>[ルール]</strong><br>
+                ・CPU同士も戦う大乱闘サバイバル！<br>
+                ・💗: HP回復 (これのみで回復)<br>
+                ・🚀: 弱ホーミング弾を発射<br>
+                ・👻: 気まぐれ軌道。時間差で敵を猛烈追尾！<br>
+                ・🎃: 少し先に投擲し、広範囲ボム爆発！<br>
+                ・⚡: 前方にランダムなジグザグ貫通ビーム！<br>
+                ・👍: 3秒後に巨大な👍を落とす！(威力3、1発限り)<br>
+                ※武器は時間経過で徐々に弱体化し、ノーマルに戻るぞ
+            </div>
+        </div>
+    </div>
+
+<script>
+/**
+ * UCD-F_ABC Engine Implementation
+ * CPUのAI改善：間合いの管理（引き撃ち）、エイム時のカニ歩き、スタック回避のランダム化
+ */
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d', { alpha: false });
+
+let width, height;
+function resize() {
+    width = window.innerWidth;
+    height = window.innerHeight;
+    canvas.width = width;
+    canvas.height = height;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// --- 構成定数 ---
+const NUM_PLAYERS = 100;
+const NUM_BUILDINGS = 300; 
+const TOTAL_ENTITIES = NUM_PLAYERS + NUM_BUILDINGS;
+
+const MAX_BEAMS = 1500;
+const MAX_ITEMS = 100; 
+const FIELD_SIZE = 4000;
+const ENTITY_RADIUS = 16;
+const BEAM_RADIUS = 4;
+const ITEM_RADIUS = 15;
+const BEAM_SPEED = 14;
+const ENTITY_SPEED = 3.5;
+const MAX_POWER_LEVEL = 4;
+
+const MAX_BEAM_LIFE = 35; 
+
+const DIRS = [
+    {x: 0, y: -1}, {x: 0.707, y: -0.707}, {x: 1, y: 0}, {x: 0.707, y: 0.707},
+    {x: 0, y: 1}, {x: -0.707, y: 0.707}, {x: -1, y: 0}, {x: -0.707, y: -0.707}
+];
+
+const P_COOLDOWNS = [35, 28, 22, 16, 12]; 
+const C_COOLDOWNS = [60, 52, 45, 38, 30]; 
+const P_BEAM_COLORS = ['#00fff5', '#aaff00', '#ffe500', '#ffaa00', '#ff00aa'];
+const C_BEAM_COLORS = ['#ff88a0', '#ff4466', '#ee0000', '#aa0000', '#660000'];
+
+// --- 魂のビットパッキング (Bit-packed SoA) ---
+const ePosX = new Float32Array(TOTAL_ENTITIES);
+const ePosY = new Float32Array(TOTAL_ENTITIES);
+const eState = new Uint32Array(TOTAL_ENTITIES);
+const eEmoji = new Array(TOTAL_ENTITIES);
+
+const cPanic = new Uint8Array(TOTAL_ENTITIES);
+const cStackCount = new Uint8Array(TOTAL_ENTITIES);
+
+const bPosX = new Float32Array(MAX_BEAMS);
+const bPosY = new Float32Array(MAX_BEAMS);
+const bDirX = new Float32Array(MAX_BEAMS);
+const bDirY = new Float32Array(MAX_BEAMS);
+const bOwner = new Int16Array(MAX_BEAMS);
+const bActive = new Uint8Array(MAX_BEAMS);
+const bLife = new Uint16Array(MAX_BEAMS); 
+const bType = new Uint8Array(MAX_BEAMS); 
+const bTimer = new Uint16Array(MAX_BEAMS); 
+const bTarget = new Int16Array(MAX_BEAMS); 
+
+const EXPLOSION_MAX = 50;
+const exActive = new Uint8Array(EXPLOSION_MAX);
+const exPosX = new Float32Array(EXPLOSION_MAX);
+const exPosY = new Float32Array(EXPLOSION_MAX);
+const exRadius = new Float32Array(EXPLOSION_MAX);
+const exLife = new Uint8Array(EXPLOSION_MAX);
+const exType = new Uint8Array(EXPLOSION_MAX); 
+
+const iPosX = new Float32Array(MAX_ITEMS);
+const iPosY = new Float32Array(MAX_ITEMS);
+const iActive = new Uint8Array(MAX_ITEMS);
+const iType = new Uint8Array(MAX_ITEMS); 
+
+const getDir = (i) => eState[i] & 0x7;
+const setDir = (i, v) => eState[i] = (eState[i] & ~0x7) | (v & 0x7);
+const getHP = (i) => (eState[i] >> 3) & 0xF;
+const setHP = (i, v) => eState[i] = (eState[i] & ~(0xF << 3)) | ((v & 0xF) << 3);
+const isPlayer = (i) => (eState[i] >> 7) & 0x1;
+const setPlayer = (i, v) => eState[i] = (eState[i] & ~(0x1 << 7)) | ((v & 0x1) << 7);
+const isActive = (i) => (eState[i] >> 8) & 0x1;
+const setActive = (i, v) => eState[i] = (eState[i] & ~(0x1 << 8)) | ((v & 0x1) << 8);
+const getFatigue = (i) => (eState[i] >> 9) & 0xFF;
+const setFatigue = (i, v) => eState[i] = (eState[i] & ~(0xFF << 9)) | ((v & 0xFF) << 9);
+const getPower = (i) => (eState[i] >> 17) & 0xF;
+const setPower = (i, v) => eState[i] = (eState[i] & ~(0xF << 17)) | ((v & 0xF) << 17);
+const getWeapon = (i) => (eState[i] >> 21) & 0x7;
+const setWeapon = (i, v) => eState[i] = (eState[i] & ~(0x7 << 21)) | ((v & 0x7) << 21);
+
+// --- 入力状態 ---
+const keys = {};
+let mouseX = 0, mouseY = 0, isMouseDown = false;
+let leftTouchId = -1, rightTouchId = -1;
+let joyMoveX = 0, joyMoveY = 0, joyAimX = 0, joyAimY = 0;
+let isJoyFiring = false;
+let leftJoyOrigin = {x:0, y:0}, leftJoyCurrent = {x:0, y:0};
+let rightJoyOrigin = {x:0, y:0}, rightJoyCurrent = {x:0, y:0};
+
+window.addEventListener('keydown', e => keys[e.code] = true);
+window.addEventListener('keyup', e => keys[e.code] = false);
+window.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
+window.addEventListener('mousedown', e => { isMouseDown = true; });
+window.addEventListener('mouseup', e => { isMouseDown = false; });
+
+canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    for (let i = 0; i < e.changedTouches.length; i++) {
+        let touch = e.changedTouches[i];
+        if (touch.clientX < width / 2 && leftTouchId === -1) {
+            leftTouchId = touch.identifier;
+            leftJoyOrigin = {x: touch.clientX, y: touch.clientY};
+            leftJoyCurrent = {x: touch.clientX, y: touch.clientY};
+        } else if (touch.clientX >= width / 2 && rightTouchId === -1) {
+            rightTouchId = touch.identifier;
+            rightJoyOrigin = {x: touch.clientX, y: touch.clientY};
+            rightJoyCurrent = {x: touch.clientX, y: touch.clientY};
+            isJoyFiring = true;
+        }
+    }
+}, {passive: false});
+
+canvas.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    for (let i = 0; i < e.changedTouches.length; i++) {
+        let touch = e.changedTouches[i];
+        if (touch.identifier === leftTouchId) {
+            let dx = touch.clientX - leftJoyOrigin.x;
+            let dy = touch.clientY - leftJoyOrigin.y;
+            let len = Math.hypot(dx, dy);
+            let maxDist = 40;
+            if (len > maxDist) { dx = (dx/len)*maxDist; dy = (dy/len)*maxDist; }
+            leftJoyCurrent = {x: leftJoyOrigin.x + dx, y: leftJoyOrigin.y + dy};
+            joyMoveX = dx / maxDist;
+            joyMoveY = dy / maxDist;
+        } else if (touch.identifier === rightTouchId) {
+            let dx = touch.clientX - rightJoyOrigin.x;
+            let dy = touch.clientY - rightJoyOrigin.y;
+            let len = Math.hypot(dx, dy);
+            let maxDist = 40;
+            if (len > maxDist) { dx = (dx/len)*maxDist; dy = (dy/len)*maxDist; }
+            rightJoyCurrent = {x: rightJoyOrigin.x + dx, y: rightJoyOrigin.y + dy};
+            if (len > 10) { joyAimX = dx; joyAimY = dy; }
+        }
+    }
+}, {passive: false});
+
+function handleTouchEnd(e) {
+    e.preventDefault();
+    for (let i = 0; i < e.changedTouches.length; i++) {
+        let touch = e.changedTouches[i];
+        if (touch.identifier === leftTouchId) { leftTouchId = -1; joyMoveX = 0; joyMoveY = 0; } 
+        else if (touch.identifier === rightTouchId) { rightTouchId = -1; isJoyFiring = false; joyAimX = 0; joyAimY = 0; }
+    }
+}
+canvas.addEventListener('touchend', handleTouchEnd, {passive: false});
+canvas.addEventListener('touchcancel', handleTouchEnd, {passive: false});
+
+// --- AI & 状態 ---
+const aiTargetX = new Float32Array(TOTAL_ENTITIES);
+const aiTargetY = new Float32Array(TOTAL_ENTITIES);
+
+let playerEmoji = "😎";
+let survivors = NUM_PLAYERS;
+let gameRunning = false;
+let playerKills = 0; 
+let noEnemyFrames = 0; 
+let cpuLevel = 1; 
+let screenShake = 0; 
+const CPU_EMOJIS = ["🤖", "👾", "💀", "🤡", "👹", "👽", "💩", "🧟", "🧛", "👺"];
+
+function updateUI() {
+    let power = getPower(0);
+    let wType = getWeapon(0);
+    let lvDisp = power === MAX_POWER_LEVEL ? "MAX" : (power + 1);
+    
+    let wName = "ノーマル";
+    if (wType === 1) wName = "🚀ロケット";
+    else if (wType === 2) wName = "👻ゴースト"; 
+    else if (wType === 3) wName = "🎃ボム";
+    else if (wType === 4) wName = "⚡サンダー";
+    else if (wType === 5) wName = "👍グッド";
+
+    document.getElementById('player-lv').innerText = `${wName} (Lv.${lvDisp})`;
+    document.getElementById('player-hp').innerText = getHP(0);
+    document.getElementById('survivors-count').innerText = survivors;
+    document.getElementById('player-kills').innerText = playerKills;
+}
+
+function initGame() {
+    playerKills = 0;
+    noEnemyFrames = 0;
+    screenShake = 0;
+
+    const diffEls = document.getElementsByName('diff');
+    for (let el of diffEls) { if (el.checked) cpuLevel = parseInt(el.value); }
+
+    for (let i = 0; i < NUM_PLAYERS; i++) {
+        ePosX[i] = Math.random() * FIELD_SIZE;
+        ePosY[i] = Math.random() * FIELD_SIZE;
+        eState[i] = 0; 
+        cPanic[i] = 0;
+        cStackCount[i] = 0;
+        setHP(i, 10); 
+        setActive(i, 1);
+        setPower(i, 0); 
+        setWeapon(i, 0);
+        setDir(i, Math.floor(Math.random() * 8));
+        
+        if (i === 0) {
+            setPlayer(i, 1);
+            eEmoji[i] = playerEmoji;
+            ePosX[i] = FIELD_SIZE / 2;
+            ePosY[i] = FIELD_SIZE / 2;
+        } else {
+            setPlayer(i, 0);
+            eEmoji[i] = CPU_EMOJIS[Math.floor(Math.random() * CPU_EMOJIS.length)];
+            aiTargetX[i] = ePosX[i];
+            aiTargetY[i] = ePosY[i];
+            
+            if (cpuLevel === 2 && Math.random() < 0.2) setPower(i, 1);
+            if (cpuLevel === 3) setPower(i, Math.floor(Math.random() * 3) + 1);
+        }
+    }
+    
+    let bIdx = NUM_PLAYERS;
+    const buildingEmojis = ["🧱", "🌲", "🗿", "🌵", "🏛️"];
+    
+    while (bIdx < TOTAL_ENTITIES) {
+        let sx = Math.random() * FIELD_SIZE;
+        let sy = Math.random() * FIELD_SIZE;
+        if (Math.hypot(sx - FIELD_SIZE / 2, sy - FIELD_SIZE / 2) < 300) continue;
+
+        let emoji = buildingEmojis[Math.floor(Math.random() * buildingEmojis.length)];
+        let type = Math.random();
+        if (type < 0.5) {
+            let angle = Math.random() * Math.PI * 2;
+            let length = Math.floor(Math.random() * 8) + 3; 
+            for (let k = 0; k < length && bIdx < TOTAL_ENTITIES; k++) {
+                ePosX[bIdx] = Math.max(ENTITY_RADIUS, Math.min(FIELD_SIZE - ENTITY_RADIUS, sx + Math.cos(angle) * k * 30));
+                ePosY[bIdx] = Math.max(ENTITY_RADIUS, Math.min(FIELD_SIZE - ENTITY_RADIUS, sy + Math.sin(angle) * k * 30));
+                eState[bIdx] = 0; 
+                setHP(bIdx, 0); setActive(bIdx, 0); eEmoji[bIdx] = emoji;
+                bIdx++;
+            }
+        } else {
+            let size = Math.floor(Math.random() * 3) + 2; 
+            for (let r = 0; r < size && bIdx < TOTAL_ENTITIES; r++) {
+                for (let c = 0; c < size && bIdx < TOTAL_ENTITIES; c++) {
+                    ePosX[bIdx] = Math.max(ENTITY_RADIUS, Math.min(FIELD_SIZE - ENTITY_RADIUS, sx + c * 30));
+                    ePosY[bIdx] = Math.max(ENTITY_RADIUS, Math.min(FIELD_SIZE - ENTITY_RADIUS, sy + r * 30));
+                    eState[bIdx] = 0; 
+                    setHP(bIdx, 0); setActive(bIdx, 0); eEmoji[bIdx] = emoji;
+                    bIdx++;
+                }
+            }
+        }
+    }
+
+    for (let i = 0; i < MAX_BEAMS; i++) bActive[i] = 0;
+    for (let i = 0; i < EXPLOSION_MAX; i++) exActive[i] = 0;
+    for (let i = 0; i < MAX_ITEMS; i++) { iActive[i] = 0; iType[i] = 0; }
+    
+    survivors = NUM_PLAYERS;
+    if(document.getElementById('max-players')) document.getElementById('max-players').innerText = NUM_PLAYERS;
+    updateUI();
+    gameRunning = true;
+    requestAnimationFrame(gameLoop);
+}
+
+document.getElementById('start-btn').addEventListener('click', () => {
+    const input = document.getElementById('emoji-input').value.trim();
+    if (input) playerEmoji = input;
+    document.getElementById('start-screen').style.display = 'none';
+    document.getElementById('hud').style.display = 'block';
+    initGame();
+});
+
+const CELL_SIZE = 100;
+const grid = new Map();
+function getCellKey(x, y) { return Math.floor(x / CELL_SIZE) + "_" + Math.floor(y / CELL_SIZE); }
+
+function findClosestEnemy(ownerId) {
+    let minDist = Infinity;
+    let targetId = -1;
+    let oX = ePosX[ownerId], oY = ePosY[ownerId];
+    
+    for (let i = 0; i < NUM_PLAYERS; i++) {
+        if (i === ownerId || !isActive(i)) continue;
+        
+        let dist = Math.hypot(ePosX[i] - oX, ePosY[i] - oY);
+        if (dist < minDist) { minDist = dist; targetId = i; }
+    }
+    return targetId;
+}
+
+function spawnBeam(ownerId, type, startX, startY, dirX, dirY, life, targetId) {
+    for (let i = 0; i < MAX_BEAMS; i++) {
+        if (bActive[i] === 0) {
+            bPosX[i] = startX; bPosY[i] = startY;
+            bDirX[i] = dirX; bDirY[i] = dirY;
+            bOwner[i] = ownerId; bActive[i] = 1; bLife[i] = life;
+            bType[i] = type; bTimer[i] = 0; bTarget[i] = targetId;
+            return true;
+        }
+    }
+    return false;
+}
+
+function fireBeam(ownerId) {
+    const f = getFatigue(ownerId);
+    if (f > 0) return; 
+
+    let wType = getWeapon(ownerId), power = getPower(ownerId), dirIdx = getDir(ownerId);
+    let dx = DIRS[dirIdx].x, dy = DIRS[dirIdx].y;
+    let cooldown;
+
+    if (isPlayer(ownerId)) {
+        if (wType === 0) cooldown = P_COOLDOWNS[power];
+        else if (wType === 1) cooldown = P_COOLDOWNS[0]; 
+        else if (wType === 2) cooldown = 50; 
+        else if (wType === 3) cooldown = 45; 
+        else if (wType === 4) cooldown = P_COOLDOWNS[power]; 
+        else if (wType === 5) cooldown = 60; 
+    } else {
+        let diffOffset = [20, 0, -10, -15][cpuLevel];
+        if (wType === 0) cooldown = Math.max(5, C_COOLDOWNS[power] + diffOffset);
+        else if (wType === 1) cooldown = Math.max(15, C_COOLDOWNS[0] + diffOffset);
+        else if (wType === 2) cooldown = 80;
+        else if (wType === 3) cooldown = 60;
+        else if (wType === 4) cooldown = Math.max(5, C_COOLDOWNS[power] + diffOffset);
+        else if (wType === 5) cooldown = 120;
+    }
+
+    let targetId = (wType === 1 || wType === 2) ? findClosestEnemy(ownerId) : -1;
+    
+    let sX = ePosX[ownerId] + dx * ENTITY_RADIUS * 1.5;
+    let sY = ePosY[ownerId] + dy * ENTITY_RADIUS * 1.5;
+
+    if (wType === 0) spawnBeam(ownerId, 0, sX, sY, dx, dy, MAX_BEAM_LIFE, -1);
+    else if (wType === 1) spawnBeam(ownerId, 1, sX, sY, dx, dy, 80, targetId); 
+    else if (wType === 2) {
+        let baseAngle = Math.atan2(dy, dx);
+        spawnBeam(ownerId, 2, sX, sY, Math.cos(baseAngle - 0.2), Math.sin(baseAngle - 0.2), 300, targetId);
+        spawnBeam(ownerId, 2, sX, sY, Math.cos(baseAngle + 0.2), Math.sin(baseAngle + 0.2), 300, targetId);
+    } else if (wType === 3) spawnBeam(ownerId, 3, sX, sY, dx, dy, 20, -1); 
+    else if (wType === 4) spawnBeam(ownerId, 4, sX, sY, dx, dy, 40, -1); 
+    else if (wType === 5) {
+        let targetX = ePosX[ownerId] + dx * 250;
+        let targetY = ePosY[ownerId] + dy * 250;
+        targetX = Math.max(ENTITY_RADIUS, Math.min(FIELD_SIZE - ENTITY_RADIUS, targetX));
+        targetY = Math.max(ENTITY_RADIUS, Math.min(FIELD_SIZE - ENTITY_RADIUS, targetY));
+        spawnBeam(ownerId, 5, targetX, targetY, 0, 0, 200, -1); 
+        setWeapon(ownerId, 0); 
+    }
+    
+    setFatigue(ownerId, cooldown);
+}
+
+function applyDamage(eId, attackerId, damageAmount = 1) {
+    if (eId === 0) screenShake = 15; 
+    let hp = getHP(eId);
+    hp -= damageAmount;
+    setHP(eId, Math.max(0, hp));
+    if (hp <= 0) {
+        setActive(eId, 0); survivors--;
+        if (attackerId === 0 && eId !== 0) {
+            playerKills++;
+            if (playerKills % 2 === 0) { 
+                let p = getPower(0); if (p < MAX_POWER_LEVEL) setPower(0, p + 1);
+            }
+        }
+        if (eId === 0 || attackerId === 0) updateUI();
+        if (eId === 0) gameOver("YOU DIED");
+        else if (survivors === 1 && isActive(0)) gameOver("VICTORY!");
+    } else if (eId === 0 || attackerId === 0) updateUI();
+}
+
+function createExplosion(x, y, ownerId) {
+    if (ownerId === 0 || (Math.hypot(x - ePosX[0], y - ePosY[0]) < ENTITY_RADIUS * 8)) screenShake = Math.max(screenShake, 10);
+    for (let i = 0; i < EXPLOSION_MAX; i++) {
+        if (!exActive[i]) {
+            exActive[i] = 1; exPosX[i] = x; exPosY[i] = y;
+            exRadius[i] = ENTITY_RADIUS * 6; exLife[i] = 15; exType[i] = 0;
+            let cx = Math.floor(x / CELL_SIZE), cy = Math.floor(y / CELL_SIZE);
+            for (let ox = -2; ox <= 2; ox++) {
+                for (let oy = -2; oy <= 2; oy++) {
+                    let nearEntities = grid.get((cx+ox)+"_"+(cy+oy));
+                    if (nearEntities) {
+                        for (let j = 0; j < nearEntities.length; j++) {
+                            let eId = nearEntities[j];
+                            if (!isActive(eId) || eId >= NUM_PLAYERS || eId === ownerId) continue; 
+                            if (Math.hypot(x - ePosX[eId], y - ePosY[eId]) < exRadius[i] + ENTITY_RADIUS) applyDamage(eId, ownerId, 1);
+                        }
+                    }
+                }
+            }
+            break;
+        }
+    }
+}
+
+function createBigGood(x, y, ownerId) {
+    if (ownerId === 0 || (Math.hypot(x - ePosX[0], y - ePosY[0]) < ENTITY_RADIUS * 15)) screenShake = Math.max(screenShake, 30);
+    for (let i = 0; i < EXPLOSION_MAX; i++) {
+        if (!exActive[i]) {
+            exActive[i] = 1; exPosX[i] = x; exPosY[i] = y;
+            exRadius[i] = Math.floor(ENTITY_RADIUS * 20); 
+            exLife[i] = 45; exType[i] = 1; 
+            let cx = Math.floor(x / CELL_SIZE), cy = Math.floor(y / CELL_SIZE);
+            for (let ox = -4; ox <= 4; ox++) {
+                for (let oy = -4; oy <= 4; oy++) {
+                    let nearEntities = grid.get((cx+ox)+"_"+(cy+oy));
+                    if (nearEntities) {
+                        for (let j = 0; j < nearEntities.length; j++) {
+                            let eId = nearEntities[j];
+                            if (!isActive(eId) || eId >= NUM_PLAYERS || eId === ownerId) continue; 
+                            if (Math.hypot(x - ePosX[eId], y - ePosY[eId]) < exRadius[i] + ENTITY_RADIUS) {
+                                applyDamage(eId, ownerId, 3); 
+                            }
+                        }
+                    }
+                }
+            }
+            break;
+        }
+    }
+}
+
+let frameCount = 0;
+
+function update() {
+    frameCount++;
+    grid.clear();
+    const pX = ePosX[0], pY = ePosY[0];
+
+    if (Math.random() < 0.07) {
+        for (let i = 0; i < MAX_ITEMS; i++) {
+            if (iActive[i] === 0) {
+                iPosX[i] = 100 + Math.random() * (FIELD_SIZE - 200); 
+                iPosY[i] = 100 + Math.random() * (FIELD_SIZE - 200);
+                iActive[i] = 1;
+                let r = Math.random();
+                if (r < 0.20) iType[i] = 0; 
+                else if (r < 0.36) iType[i] = 1; 
+                else if (r < 0.52) iType[i] = 2; 
+                else if (r < 0.68) iType[i] = 3; 
+                else if (r < 0.84) iType[i] = 4; 
+                else iType[i] = 5; 
+                break;
+            }
+        }
+    }
+
+    for (let i = 0; i < TOTAL_ENTITIES; i++) {
+        if (isActive(i) || (getHP(i) <= 0 && ePosX[i] !== 0)) {
+            const cell = getCellKey(ePosX[i], ePosY[i]);
+            if (!grid.has(cell)) grid.set(cell, []);
+            grid.get(cell).push(i);
+        }
+    }
+
+    for (let i = 0; i < TOTAL_ENTITIES; i++) {
+        if (!isActive(i)) continue;
+        if ((frameCount + i) % 480 === 0) {
+            let p = getPower(i), w = getWeapon(i);
+            if (p > 0) setPower(i, p - 1);
+            else if (w !== 0) { setWeapon(i, 0); setPower(i, 0); }
+            if (i === 0) updateUI();
+        }
+        let fatigue = getFatigue(i); if (fatigue > 0) setFatigue(i, fatigue - 1);
+        let dx = 0, dy = 0, power = getPower(i);
+        
+        if (isPlayer(i)) {
+            let kDx = 0, kDy = 0;
+            if (keys['KeyW'] || keys['ArrowUp']) kDy -= 1;
+            if (keys['KeyS'] || keys['ArrowDown']) kDy += 1;
+            if (keys['KeyA'] || keys['ArrowLeft']) kDx -= 1;
+            if (keys['KeyD'] || keys['ArrowRight']) kDx += 1;
+            dx = kDx + joyMoveX; dy = kDy + joyMoveY;
+            if (dx !== 0 || dy !== 0) {
+                const len = Math.hypot(dx, dy);
+                ePosX[i] += (dx / len) * ENTITY_SPEED * 1.3; ePosY[i] += (dy / len) * ENTITY_SPEED * 1.3;
+                let dirIdx = Math.round((Math.atan2(dy, dx) + Math.PI / 2) / (Math.PI / 4)) % 8;
+                if (dirIdx < 0) dirIdx += 8; setDir(i, dirIdx);
+            }
+            if ((isMouseDown || isJoyFiring) && fatigue === 0) {
+                let aimDir = getDir(i);
+                if (isJoyFiring && (joyAimX !== 0 || joyAimY !== 0)) aimDir = (Math.round((Math.atan2(joyAimY, joyAimX) + Math.PI / 2) / (Math.PI / 4)) % 8);
+                else if (isMouseDown) aimDir = (Math.round((Math.atan2(mouseY - height/2, mouseX - width/2) + Math.PI / 2) / (Math.PI / 4)) % 8);
+                if (aimDir < 0) aimDir += 8; setDir(i, aimDir); fireBeam(i);
+            }
+        } else {
+            if (cPanic[i] > 0) cPanic[i]--;
+            let isPanic = cPanic[i] > 0;
+
+            let targetE = findClosestEnemy(i);
+            const distToEnemy = targetE !== -1 ? Math.hypot(ePosX[targetE] - ePosX[i], ePosY[targetE] - ePosY[i]) : Infinity;
+            
+            let thinkBase = [80, 40, 20, 10][cpuLevel];
+            const thinkInterval = distToEnemy > 1000 ? thinkBase * 2 : distToEnemy > 500 ? thinkBase : Math.max(1, Math.floor(thinkBase / 2));
+            
+            if (!isPanic && (frameCount % thinkInterval === 0 || Math.hypot(ePosX[i] - aiTargetX[i], ePosY[i] - aiTargetY[i]) < 10)) {
+                let targetItemId = -1, targetItemDist = [300, 600, 1000, 1500][cpuLevel]; 
+                let itemFocusProb = [0.3, 0.5, 0.8, 1.0][cpuLevel];
+                if (Math.random() < itemFocusProb) {
+                    for(let j = 0; j < MAX_ITEMS; j++) if(iActive[j]){
+                        let dist = Math.hypot(iPosX[j] - ePosX[i], iPosY[j] - ePosY[i]);
+                        if(dist < targetItemDist){ targetItemDist = dist; targetItemId = j; }
+                    }
+                }
+
+                if (targetItemId !== -1) {
+                    aiTargetX[i] = iPosX[targetItemId];
+                    aiTargetY[i] = iPosY[targetItemId];
+                } else {
+                    let aimEnemyProb = [0.1, 0.3, 0.6, 0.9][cpuLevel];
+                    if (targetE !== -1 && distToEnemy < 800 && Math.random() < aimEnemyProb) {
+                        let tX = ePosX[targetE], tY = ePosY[targetE];
+                        
+                        // 【改善①】間合いの管理（近すぎる場合は距離を取る：引き撃ち・Kiting）
+                        let optimalDist = [100, 150, 200, 250][cpuLevel]; 
+                        if (distToEnemy < optimalDist) {
+                            let angleFromEnemy = Math.atan2(ePosY[i] - tY, ePosX[i] - tX);
+                            aiTargetX[i] = ePosX[i] + Math.cos(angleFromEnemy) * 300 + (Math.random() - 0.5) * 100;
+                            aiTargetY[i] = ePosY[i] + Math.sin(angleFromEnemy) * 300 + (Math.random() - 0.5) * 100;
+                        } else {
+                            if (cpuLevel === 3) {
+                                let pDx = 0, pDy = 0;
+                                if (targetE === 0) {
+                                    if (keys['KeyW'] || keys['ArrowUp'] || joyMoveY < -0.5) pDy -= 1;
+                                    if (keys['KeyS'] || keys['ArrowDown'] || joyMoveY > 0.5) pDy += 1;
+                                    if (keys['KeyA'] || keys['ArrowLeft'] || joyMoveX < -0.5) pDx -= 1;
+                                    if (keys['KeyD'] || keys['ArrowRight'] || joyMoveX > 0.5) pDx += 1;
+                                } else {
+                                    let tDir = getDir(targetE);
+                                    pDx = DIRS[tDir].x; pDy = DIRS[tDir].y;
+                                }
+                                aiTargetX[i] = tX + pDx * 150;
+                                aiTargetY[i] = tY + pDy * 150;
+                            } else {
+                                let blur = [200, 100, 50, 0][cpuLevel];
+                                aiTargetX[i] = tX + (Math.random() - 0.5) * blur;
+                                aiTargetY[i] = tY + (Math.random() - 0.5) * blur;
+                            }
+                        }
+                    } else {
+                        aiTargetX[i] = ePosX[i] + (Math.random() - 0.5) * 500;
+                        aiTargetY[i] = ePosY[i] + (Math.random() - 0.5) * 500;
+                    }
+                }
+            }
+
+            aiTargetX[i] = Math.max(ENTITY_RADIUS * 2, Math.min(FIELD_SIZE - ENTITY_RADIUS * 2, aiTargetX[i]));
+            aiTargetY[i] = Math.max(ENTITY_RADIUS * 2, Math.min(FIELD_SIZE - ENTITY_RADIUS * 2, aiTargetY[i]));
+
+            dx = aiTargetX[i] - ePosX[i]; dy = aiTargetY[i] - ePosY[i];
+            const len = Math.hypot(dx, dy);
+            let movingDir = getDir(i);
+            if (len > 0) {
+                ePosX[i] += (dx / len) * ENTITY_SPEED * ([0.4, 0.6, 0.9, 1.2][cpuLevel] + power * 0.08);
+                movingDir = (Math.round((Math.atan2(dy, dx) + Math.PI / 2) / (Math.PI / 4)) % 8 + 8) % 8;
+            }
+
+            // 【改善②】移動方向に関わらず、敵が射程内にいれば敵の方を向く（カニ歩き）
+            let aimed = false;
+            if (targetE !== -1 && distToEnemy < 600) {
+                let angleToEnemy = Math.atan2(ePosY[targetE] - ePosY[i], ePosX[targetE] - ePosX[i]);
+                movingDir = (Math.round((angleToEnemy + Math.PI / 2) / (Math.PI / 4)) % 8 + 8) % 8;
+                aimed = true;
+            }
+            setDir(i, movingDir);
+
+            if (fatigue === 0 && Math.random() < [0.005, 0.015, 0.03, 0.08][cpuLevel]) {
+                if (aimed) {
+                    fireBeam(i);
+                }
+            }
+        }
+
+        let cx = Math.floor(ePosX[i] / CELL_SIZE), cy = Math.floor(ePosY[i] / CELL_SIZE), hitWall = false; 
+        for (let ox = -1; ox <= 1; ox++) for (let oy = -1; oy <= 1; oy++) {
+            let arr = grid.get((cx+ox)+"_"+(cy+oy));
+            if (arr) for (let j = 0; j < arr.length; j++) {
+                let wId = arr[j]; if (wId === i) continue;
+                if (!isActive(wId) && ePosX[wId] !== 0) {
+                    let cxD = ePosX[i] - ePosX[wId], cyD = ePosY[i] - ePosY[wId], d = Math.hypot(cxD, cyD);
+                    if (d < ENTITY_RADIUS * 2.2) {
+                        hitWall = true;
+                        if (d > 0) { ePosX[i] += (cxD / d) * (ENTITY_RADIUS * 2.2 - d); ePosY[i] += (cyD / d) * (ENTITY_RADIUS * 2.2 - d); }
+                        else { ePosX[i] += (Math.random()-0.5)*10; ePosY[i] += (Math.random()-0.5)*10; }
+                    }
+                }
+            }
+        }
+        
+        if (!isPlayer(i)) {
+            if (hitWall) {
+                if (cPanic[i] === 0) {
+                    cStackCount[i]++;
+                    if (cStackCount[i] > 5) { 
+                        cPanic[i] = 180; 
+                        cStackCount[i] = 0;
+                        // 【改善③】元の目標の逆方向ではなく、ランダムな方向へ逃げる（角ハマりを確実に防止）
+                        let escapeAngle = Math.random() * Math.PI * 2;
+                        aiTargetX[i] = ePosX[i] + Math.cos(escapeAngle) * 400; 
+                        aiTargetY[i] = ePosY[i] + Math.sin(escapeAngle) * 400;
+                        aiTargetX[i] = Math.max(ENTITY_RADIUS * 2, Math.min(FIELD_SIZE - ENTITY_RADIUS * 2, aiTargetX[i]));
+                        aiTargetY[i] = Math.max(ENTITY_RADIUS * 2, Math.min(FIELD_SIZE - ENTITY_RADIUS * 2, aiTargetY[i]));
+                    }
+                }
+            } else if (cStackCount[i] > 0) {
+                cStackCount[i]--;
+            }
+        }
+
+        ePosX[i] = Math.max(ENTITY_RADIUS, Math.min(FIELD_SIZE - ENTITY_RADIUS, ePosX[i]));
+        ePosY[i] = Math.max(ENTITY_RADIUS, Math.min(FIELD_SIZE - ENTITY_RADIUS, ePosY[i]));
+    }
+
+    for (let i = 0; i < MAX_ITEMS; i++) {
+        if (!iActive[i]) continue;
+        let cx = Math.floor(iPosX[i] / CELL_SIZE), cy = Math.floor(iPosY[i] / CELL_SIZE), picked = false;
+        for (let ox = -1; ox <= 1 && !picked; ox++) for (let oy = -1; oy <= 1 && !picked; oy++) {
+            const near = grid.get((cx+ox)+"_"+(cy+oy));
+            if (near) for (let j = 0; j < near.length; j++) {
+                const eId = near[j]; if (!isActive(eId) || getHP(eId) <= 0) continue; 
+                if (Math.hypot(iPosX[i] - ePosX[eId], iPosY[i] - ePosY[eId]) < ENTITY_RADIUS + ITEM_RADIUS + 15) {
+                    iActive[i] = 0; picked = true;
+                    if (iType[i] === 0) { let hp = getHP(eId), max = 10; if (hp < max) setHP(eId, hp + 1); }
+                    else { setWeapon(eId, iType[i]); setPower(eId, MAX_POWER_LEVEL); }
+                    if (eId === 0) updateUI(); break;
+                }
+            }
+        }
+    }
+
+    for (let i = 0; i < MAX_BEAMS; i++) {
+        if (bActive[i] === 0) continue;
+
+        if (bType[i] === 5) { 
+            bTimer[i]++;
+            if (bTimer[i] >= 180) {
+                bActive[i] = 0;
+                createBigGood(bPosX[i], bPosY[i], bOwner[i]);
+            }
+            continue; 
+        }
+
+        let isP = (bType[i] === 3); 
+        let isThunder = (bType[i] === 4);
+        bLife[i]--;
+        
+        if (bLife[i] <= 0) { 
+            bActive[i] = 0; 
+            if (isP) createExplosion(bPosX[i], bPosY[i], bOwner[i]); 
+            continue; 
+        }
+
+        let speed = BEAM_SPEED;
+        if (bType[i] === 1) { 
+            speed *= 0.8; let tId = bTarget[i];
+            if (tId >= 0 && isActive(tId)) {
+                let aT = Math.atan2(ePosY[tId] - bPosY[i], ePosX[tId] - bPosX[i]), aC = Math.atan2(bDirY[i], bDirX[i]), diff = aT - aC;
+                while (diff > Math.PI) diff -= Math.PI * 2; while (diff < -Math.PI) diff += Math.PI * 2;
+                let newA = aC + diff * 0.04; bDirX[i] = Math.cos(newA); bDirY[i] = Math.sin(newA);
+            }
+        } else if (bType[i] === 2) { 
+            speed *= 0.6; bTimer[i]++;
+            if (bTimer[i] < 120) { let a = Math.atan2(bDirY[i], bDirX[i]) + Math.sin(bTimer[i]*0.2+i)*0.1; bDirX[i] = Math.cos(a); bDirY[i] = Math.sin(a); }
+            else { 
+                speed = BEAM_SPEED * 1.2; let tId = bTarget[i];
+                if (tId >= 0 && isActive(tId)) {
+                    let aT = Math.atan2(ePosY[tId] - bPosY[i], ePosX[tId] - bPosX[i]), aC = Math.atan2(bDirY[i], bDirX[i]), diff = aT - aC;
+                    while (diff > Math.PI) diff -= Math.PI * 2; while (diff < -Math.PI) diff += Math.PI * 2;
+                    let newA = aC + diff * 0.05; bDirX[i] = Math.cos(newA); bDirY[i] = Math.sin(newA);
+                }
+            }
+        } else if (isThunder) {
+            speed *= 1.5; 
+            let currentA = Math.atan2(bDirY[i], bDirX[i]);
+            let newA = currentA + (Math.random() - 0.5) * 1.5; 
+            bDirX[i] = Math.cos(newA);
+            bDirY[i] = Math.sin(newA);
+        }
+
+        bPosX[i] += bDirX[i] * speed; bPosY[i] += bDirY[i] * speed;
+        
+        if (bPosX[i] < 0 || bPosX[i] > FIELD_SIZE || bPosY[i] < 0 || bPosY[i] > FIELD_SIZE) {
+            bActive[i] = 0; if (isP) createExplosion(bPosX[i], bPosY[i], bOwner[i]); continue;
+        }
+
+        let cx = Math.floor(bPosX[i] / CELL_SIZE), cy = Math.floor(bPosY[i] / CELL_SIZE), hit = false;
+        for (let ox = -1; ox <= 1 && !hit; ox++) for (let oy = -1; oy <= 1 && !hit; oy++) {
+            const near = grid.get((cx+ox)+"_"+(cy+oy));
+            if (near) for (let j = 0; j < near.length; j++) {
+                const eId = near[j]; if (eId === bOwner[i]) continue;
+                let rad = BEAM_RADIUS; 
+                if (bType[i] === 0) rad *= (1 + getPower(bOwner[i])*0.5); 
+                else if (bType[i] === 1) rad *= 2; 
+                else if (isP || bType[i] === 2 || isThunder) rad *= 1.5;
+
+                if (Math.hypot(bPosX[i] - ePosX[eId], bPosY[i] - ePosY[eId]) < ENTITY_RADIUS + rad) {
+                    if (!isThunder) bActive[i] = 0; 
+                    hit = true; 
+                    if (isP) { createExplosion(bPosX[i], bPosY[i], bOwner[i]); break; }
+                    if (!isActive(eId)) break; 
+                    applyDamage(eId, bOwner[i], 1); 
+                    if (!isThunder) break; 
+                }
+            }
+        }
+    }
+}
+
+function draw() {
+    ctx.fillStyle = '#1a1a2e'; ctx.fillRect(0, 0, width, height);
+    const pX = ePosX[0], pY = ePosY[0];
+    let sX = 0, sY = 0; if (screenShake > 0) { sX = (Math.random()-0.5)*screenShake*2; sY = (Math.random()-0.5)*screenShake*2; screenShake--; }
+    ctx.save(); ctx.translate(width/2 - pX + sX, height/2 - pY + sY);
+    ctx.strokeStyle = '#e94560'; ctx.lineWidth = 5; ctx.strokeRect(0, 0, FIELD_SIZE, FIELD_SIZE);
+    ctx.strokeStyle = '#2a2a4e'; ctx.lineWidth = 1;
+    for (let x = Math.floor((pX-width/2)/100)*100; x < pX+width/2; x+=100) if(x>=0&&x<=FIELD_SIZE){ ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,FIELD_SIZE);ctx.stroke(); }
+    for (let y = Math.floor((pY-height/2)/100)*100; y < pY+height/2; y+=100) if(y>=0&&y<=FIELD_SIZE){ ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(FIELD_SIZE,y);ctx.stroke(); }
+
+    for (let i = 0; i < EXPLOSION_MAX; i++) if (exActive[i]) {
+        exLife[i]--; if (exLife[i] <= 0) { exActive[i] = 0; continue; }
+        ctx.save(); ctx.translate(exPosX[i], exPosY[i]); 
+        
+        if (exType[i] === 0) { 
+            ctx.globalAlpha = exLife[i]/15; ctx.fillStyle = '#ff8800'; ctx.beginPath(); ctx.arc(0,0,exRadius[i],0,Math.PI*2); ctx.fill(); 
+            ctx.strokeStyle = '#ff0000'; ctx.lineWidth = 4; ctx.stroke();
+        } else if (exType[i] === 1) { 
+            ctx.globalAlpha = Math.min(1, exLife[i]/15);
+            ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            let scale = 1;
+            if (exLife[i] > 35) scale = 1 + (exLife[i] - 35) * 0.2; 
+            ctx.scale(scale, scale);
+            ctx.font = `${exRadius[i]}px sans-serif`;
+            ctx.fillText("👍", 0, 0);
+        }
+        ctx.restore();
+    }
+
+    ctx.font = "20px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    for (let i = 0; i < MAX_ITEMS; i++) if (iActive[i]) {
+        let yO = Math.sin(frameCount*0.1+i)*5, icon = ["💗","🚀","👻","🎃","⚡","👍"][iType[i]];
+        ctx.fillText(icon, iPosX[i], iPosY[i]+yO);
+    }
+
+    for (let i = 0; i < MAX_BEAMS; i++) if (bActive[i]) {
+        if (bType[i] === 0) {
+            let p = getPower(bOwner[i]); ctx.fillStyle = (bOwner[i] === 0) ? P_BEAM_COLORS[p] : C_BEAM_COLORS[p];
+            ctx.beginPath(); ctx.arc(bPosX[i], bPosY[i], BEAM_RADIUS*(1+p*0.5), 0, Math.PI*2); ctx.fill();
+        } else if (bType[i] === 5) {
+            ctx.save(); ctx.translate(bPosX[i], bPosY[i]);
+            let progress = bTimer[i] / 180;
+            ctx.globalAlpha = 0.5 + 0.5 * Math.sin(frameCount * 0.2);
+            ctx.fillStyle = 'rgba(255, 200, 0, 0.3)';
+            ctx.beginPath(); ctx.arc(0, 0, ENTITY_RADIUS * 20 * progress, 0, Math.PI*2); ctx.fill();
+            ctx.strokeStyle = 'rgba(255, 200, 0, 0.8)';
+            ctx.lineWidth = 2; ctx.stroke();
+            ctx.font = "30px sans-serif"; ctx.fillText("👍", 0, 0);
+            ctx.restore();
+        } else {
+            ctx.font = "18px sans-serif";
+            let icon = ["", "🚀", "👻", "🎃", "⚡"][bType[i]];
+            ctx.save(); ctx.translate(bPosX[i], bPosY[i]);
+            if (bType[i] === 1 || bType[i] === 2) ctx.rotate(Math.atan2(bDirY[i], bDirX[i]) + Math.PI/4); 
+            else if (bType[i] === 3) ctx.rotate(frameCount*0.2);
+            else if (bType[i] === 4) ctx.rotate(Math.atan2(bDirY[i], bDirX[i])); 
+            ctx.fillText(icon, 0, 0); ctx.restore();
+        }
+    }
+
+    let visEn = 0; ctx.font = "24px sans-serif";
+    for (let i = 0; i < TOTAL_ENTITIES; i++) {
+        if (ePosX[i] < pX-width/2-50 || ePosX[i] > pX+width/2+50 || ePosY[i] < pY-height/2-50 || ePosY[i] > pY+height/2+50) continue; 
+        const x = ePosX[i], y = ePosY[i];
+        if (!isActive(i)) {
+            if(getHP(i) <= 0 && ePosX[i] !== 0) { 
+                if (i >= NUM_PLAYERS) { ctx.font = "30px sans-serif"; ctx.fillText(eEmoji[i], x, y+2); ctx.font = "24px sans-serif"; }
+                else { ctx.globalAlpha = 0.5; ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(x,y,ENTITY_RADIUS,0,Math.PI*2); ctx.fill(); ctx.globalAlpha = 1.0; }
+            }
+            continue;
+        }
+        if (i !== 0 && i < NUM_PLAYERS) visEn++;
+        const hp = getHP(i), max = 10;
+        ctx.fillStyle = isPlayer(i) ? '#00fff5' : '#ff5e7e';
+        ctx.fillRect(x-15, y-25, 30*(hp/max), 4);
+        ctx.fillText(eEmoji[i], x, y+2);
+        let p = getPower(i); if (p > 0) {
+            ctx.strokeStyle = isPlayer(i) ? P_BEAM_COLORS[p] : C_BEAM_COLORS[p]; ctx.lineWidth = 1+p*1.5; ctx.globalAlpha = 0.6+0.2*Math.sin(frameCount*0.2);
+            ctx.beginPath(); ctx.arc(x,y,ENTITY_RADIUS+4+p*2,0,Math.PI*2); ctx.stroke(); ctx.globalAlpha = 1.0;
+        }
+    }
+    if (visEn === 0) noEnemyFrames++; else noEnemyFrames = 0;
+    if (noEnemyFrames >= 180 && isActive(0) && survivors > 1) {
+        let minDist = Infinity, tX = 0, tY = 0;
+        for (let i = 1; i < NUM_PLAYERS; i++) if (isActive(i)) { let d = Math.hypot(ePosX[i]-pX, ePosY[i]-pY); if (d < minDist) { minDist = d; tX = ePosX[i]; tY = ePosY[i]; } }
+        if (minDist !== Infinity) {
+            let a = Math.atan2(tY-pY, tX-pX); ctx.save(); ctx.translate(pX+Math.cos(a)*120, pY+Math.sin(a)*120); ctx.rotate(a);
+            ctx.globalAlpha = 0.5+0.5*Math.sin(frameCount*0.15); ctx.fillStyle = '#ff0055'; ctx.beginPath(); ctx.moveTo(15,0); ctx.lineTo(-10,15); ctx.lineTo(-5,0); ctx.lineTo(-10,-15); ctx.fill(); ctx.restore();
+        }
+    }
+    ctx.restore(); 
+    ctx.setTransform(1, 0, 0, 1, 0, 0); 
+    if (leftTouchId !== -1) {
+        ctx.strokeStyle = 'rgba(0,255,245,0.4)'; ctx.beginPath(); ctx.arc(leftJoyOrigin.x, leftJoyOrigin.y, 40, 0, Math.PI*2); ctx.stroke();
+        ctx.fillStyle = 'rgba(0,255,245,0.6)'; ctx.beginPath(); ctx.arc(leftJoyCurrent.x, leftJoyCurrent.y, 20, 0, Math.PI*2); ctx.fill();
+    }
+    if (rightTouchId !== -1) {
+        ctx.strokeStyle = 'rgba(255,94,126,0.4)'; ctx.beginPath(); ctx.arc(rightJoyOrigin.x, rightJoyOrigin.y, 40, 0, Math.PI*2); ctx.stroke();
+        ctx.fillStyle = 'rgba(255,94,126,0.6)'; ctx.beginPath(); ctx.arc(rightJoyCurrent.x, rightJoyCurrent.y, 20, 0, Math.PI*2); ctx.fill();
+    }
+}
+
+function gameOver(msg) {
+    gameRunning = false;
+    document.getElementById('result-text').innerText = msg;
+    document.getElementById('result-text').style.color = msg === "YOU DIED" ? "#ff5e7e" : "#00fff5";
+    document.getElementById('game-over').style.display = 'block';
+}
+
+function gameLoop() {
+    if (!gameRunning) return;
+    update();
+    draw();
+    requestAnimationFrame(gameLoop);
+}
+</script>
+</body>
+</html>
