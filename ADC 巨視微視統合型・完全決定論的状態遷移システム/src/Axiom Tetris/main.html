@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Axiom Dynamics Core</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #020617;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #065f46;
+        }
+    </style>
+</head>
+<body class="flex h-screen bg-[#0f172a] text-emerald-500 font-mono text-xs overflow-hidden select-none">
+
+    <!-- Control Panel (Left) -->
+    <div class="w-80 border-r border-emerald-800/50 p-4 flex flex-col gap-6 bg-[#020617] overflow-y-auto shrink-0">
+        <div class="border-b border-emerald-800/50 pb-4">
+            <h1 class="text-sm font-bold text-emerald-400 mb-1">Axiom Dynamics Core</h1>
+            <p class="text-emerald-700 text-[10px]">巨視微視統合型・完全決定論的状態遷移システム</p>
+            <div class="mt-2 inline-block px-2 py-1 bg-emerald-900/30 border border-emerald-800 rounded text-[10px]">
+                Input Sync: LOCKED
+            </div>
+        </div>
+
+        <!-- PDE Perceptual Controls -->
+        <section class="flex flex-col gap-3">
+            <h2 class="text-emerald-300 border-l-2 border-emerald-500 pl-2">PDE Perceptual Controls</h2>
+            
+            <div class="bg-emerald-900/10 p-3 rounded border border-emerald-900/50">
+                <label class="flex justify-between mb-2 text-emerald-600">
+                    <span>Velocity (体験強度)</span>
+                    <span id="velocity-val">5 / 10</span>
+                </label>
+                <input 
+                    type="range" id="velocity-slider" min="1" max="10" value="5"
+                    class="w-full accent-emerald-500 cursor-pointer"
+                />
+                <p class="text-[10px] text-emerald-800 mt-2">VIF Time Dilation Master Key</p>
+            </div>
+
+            <div class="bg-emerald-900/10 p-3 rounded border border-emerald-900/50">
+                <label class="flex justify-between mb-2 text-emerald-600">
+                    <span>Active Instances (展開領域)</span>
+                    <span id="instances-val">1000</span>
+                </label>
+                <div class="flex gap-2">
+                    <button id="btn-inst-dec" class="flex-1 bg-emerald-900/30 hover:bg-emerald-800/50 py-1 rounded transition">-100</button>
+                    <button id="btn-inst-inc" class="flex-1 bg-emerald-900/30 hover:bg-emerald-800/50 py-1 rounded transition">+100</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Time Dilation & Reversal -->
+        <section class="flex flex-col gap-3">
+            <h2 class="text-emerald-300 border-l-2 border-emerald-500 pl-2">Shadow Phase Reversal</h2>
+            <div class="flex gap-2">
+                <button id="btn-rollback-1" class="flex-1 bg-rose-900/20 text-rose-500 border border-rose-900/50 hover:bg-rose-900/40 py-2 rounded transition">
+                    -1 Sec (Phase Jump)
+                </button>
+                <button id="btn-rollback-10" class="flex-1 bg-rose-900/20 text-rose-500 border border-rose-900/50 hover:bg-rose-900/40 py-2 rounded transition">
+                    -10 Sec (Deep Rollback)
+                </button>
+            </div>
+            <p class="text-[10px] text-emerald-800">決定論的状態復元・未来予測プロセス</p>
+        </section>
+
+        <!-- IPDF / RCM Status -->
+        <section class="flex flex-col gap-3">
+            <h2 class="text-emerald-300 border-l-2 border-emerald-500 pl-2">IPDF / RCM Telemetry</h2>
+            <div class="grid grid-cols-2 gap-2 text-emerald-600">
+                <div class="bg-emerald-900/10 p-2 rounded">
+                    <span class="block text-[10px]">Global Tick</span>
+                    <span id="stat-tick" class="text-emerald-400 text-sm">0</span>
+                </div>
+                <div class="bg-emerald-900/10 p-2 rounded">
+                    <span class="block text-[10px]">Avg Fitness</span>
+                    <span id="stat-fit" class="text-emerald-400 text-sm">0.00</span>
+                </div>
+                <div class="bg-emerald-900/10 p-2 rounded">
+                    <span class="block text-[10px]">Global Entropy</span>
+                    <span id="stat-temp" class="text-emerald-400 text-sm">1.0000</span>
+                </div>
+                <div class="bg-emerald-900/10 p-2 rounded">
+                    <span class="block text-[10px]">FBM Wave (Garbage)</span>
+                    <span id="stat-fbm" class="text-emerald-400 text-sm">0</span>
+                </div>
+                
+                <!-- 死亡インスタンスのカウント表示 -->
+                <div class="bg-rose-900/10 p-2 rounded col-span-2 border border-rose-900/50">
+                    <span class="block text-[10px] text-rose-500">Dead Instances (ゲームオーバー)</span>
+                    <span id="stat-dead" class="text-rose-400 text-sm font-bold">0 / 1000</span>
+                </div>
+            </div>
+        </section>
+        
+        <div class="mt-auto pt-4 border-t border-emerald-800/50 text-[10px] text-emerald-800 text-center">
+            ADC Core v1.1.3. Permanent Death Mode.
+        </div>
+    </div>
+
+    <!-- Simulation Canvas (Right) -->
+    <div class="flex-1 relative bg-black flex items-center justify-center p-4 min-w-0">
+        <div class="absolute inset-4 border border-emerald-900/30 rounded shadow-[0_0_50px_rgba(16,185,129,0.05)] pointer-events-none z-10"></div>
+        <canvas 
+            id="sim-canvas" 
+            width="1600" 
+            height="900" 
+            class="w-full h-full object-contain filter contrast-125 brightness-110 cursor-pointer"
+        ></canvas>
+    </div>
+
+    <script>
+        // ============================================================================
+        // ADC (Axiom Dynamics Core) - 巨視微視統合型・完全決定論的状態遷移システム
+        // ============================================================================
+
+        const BOARD_W = 10;
+        const BOARD_H = 20;
+        const HISTORY_LEN = 600;
+        const MAX_INSTANCES = 10000;
+
+        const PIECES = [
+            [], 
+            [ [[0,1],[1,1],[2,1],[3,1]], [[2,0],[2,1],[2,2],[2,3]], [[0,2],[1,2],[2,2],[3,2]], [[1,0],[1,1],[1,2],[1,3]] ], // I
+            [ [[0,0],[0,1],[1,1],[2,1]], [[1,0],[2,0],[1,1],[1,2]], [[0,1],[1,1],[2,1],[2,2]], [[1,0],[1,1],[0,2],[1,2]] ], // J
+            [ [[2,0],[0,1],[1,1],[2,1]], [[1,0],[1,1],[1,2],[2,2]], [[0,1],[1,1],[2,1],[0,2]], [[0,0],[1,0],[1,1],[1,2]] ], // L
+            [ [[1,0],[2,0],[1,1],[2,1]], [[1,0],[2,0],[1,1],[2,1]], [[1,0],[2,0],[1,1],[2,1]], [[1,0],[2,0],[1,1],[2,1]] ], // O
+            [ [[1,0],[2,0],[0,1],[1,1]], [[1,0],[1,1],[2,1],[2,2]], [[1,1],[2,1],[0,2],[1,2]], [[0,0],[0,1],[1,1],[1,2]] ], // S
+            [ [[1,0],[0,1],[1,1],[2,1]], [[1,0],[1,1],[2,1],[1,2]], [[0,1],[1,1],[2,1],[1,2]], [[1,0],[0,1],[1,1],[1,2]] ], // T
+            [ [[0,0],[1,0],[1,1],[2,1]], [[2,0],[1,1],[2,1],[1,2]], [[0,1],[1,1],[1,2],[2,2]], [[1,0],[0,1],[1,1],[0,2]] ]  // Z
+        ];
+
+        const PALETTE = new Uint32Array([
+            0xFF111111, 0xFFE5C533, 0xFFD27B2B, 0xFF268BFF, 0xFF33D2FF, 0xFF44D661, 0xFFB24CD4, 0xFF3C3CEE, 0xFF666666, 0xFF000000
+        ]);
+        
+        const HEX_PALETTE = [
+            '#111111', '#33C5E5', '#2B7BD2', '#FF8B26', '#FFD233', '#61D644', '#D44CB2', '#EE3C3C', '#666666', '#000000'
+        ];
+
+        let boards = new Int8Array(0);
+        let pieceData = new Int32Array(0); 
+        let statsData = new Int32Array(0);
+        let genesData = new Float32Array(0);
+
+        let currentSeed = 123456789;
+        let tickCount = 0;
+        let activeCount = 1000;
+        let currentVelocity = 5;
+        let globalTemperature = 1.0;
+        let totalPerturbations = 0;
+        
+        let selectedInstance = -1;
+
+        class HistoryBuffer {
+            constructor(count, len) {
+                this.len = len;
+                this.byteSize = count * 272; 
+                this.buffers = Array.from({length: len}, () => new Uint8Array(this.byteSize));
+                this.seeds = new Uint32Array(len);
+            }
+
+            save(idx, b, p, s, g, seed) {
+                const arr = this.buffers[idx % this.len];
+                let offset = 0;
+                arr.set(new Uint8Array(b.buffer, 0, b.byteLength), offset); offset += b.byteLength;
+                arr.set(new Uint8Array(p.buffer, 0, p.byteLength), offset); offset += p.byteLength;
+                arr.set(new Uint8Array(s.buffer, 0, s.byteLength), offset); offset += s.byteLength;
+                arr.set(new Uint8Array(g.buffer, 0, g.byteLength), offset);
+                this.seeds[idx % this.len] = seed;
+            }
+
+            load(idx, b, p, s, g) {
+                const arr = this.buffers[idx % this.len];
+                let offset = 0;
+                new Uint8Array(b.buffer).set(arr.subarray(offset, offset + b.byteLength)); offset += b.byteLength;
+                new Uint8Array(p.buffer).set(arr.subarray(offset, offset + p.byteLength)); offset += p.byteLength;
+                new Uint8Array(s.buffer).set(arr.subarray(offset, offset + s.byteLength)); offset += s.byteLength;
+                new Uint8Array(g.buffer).set(arr.subarray(offset, offset + g.byteLength));
+                return this.seeds[idx % this.len];
+            }
+        }
+        let history = null;
+
+        function nextRandom() {
+            currentSeed ^= currentSeed << 13;
+            currentSeed ^= currentSeed >> 17;
+            currentSeed ^= currentSeed << 5;
+            return (currentSeed >>> 0) / 4294967296;
+        }
+
+        function initSystem(count) {
+            activeCount = count;
+            tickCount = 0;
+            totalPerturbations = 0;
+            globalTemperature = 1.0;
+            selectedInstance = -1;
+
+            boards = new Int8Array(count * 200);
+            pieceData = new Int32Array(count * 10);
+            statsData = new Int32Array(count * 4);
+            genesData = new Float32Array(count * 4);
+            history = new HistoryBuffer(count, HISTORY_LEN);
+
+            for(let i = 0; i < count; i++) {
+                statsData[i * 4 + 0] = 0; 
+                genesData[i * 4 + 0] = -0.5 + (nextRandom() - 0.5) * 0.2;
+                genesData[i * 4 + 1] = -0.8 + (nextRandom() - 0.5) * 0.2;
+                genesData[i * 4 + 2] = -0.2 + (nextRandom() - 0.5) * 0.2;
+                genesData[i * 4 + 3] = +0.5 + (nextRandom() - 0.5) * 0.2;
+            }
+            
+            document.getElementById('instances-val').innerText = activeCount;
+            updateTelemetry();
+        }
+
+        function spawnPiece(i) {
+            let nextT = pieceData[i*10 + 9];
+            if (nextT === 0) {
+                nextT = Math.floor(nextRandom() * 7) + 1;
+            }
+            pieceData[i*10 + 0] = nextT;
+            pieceData[i*10 + 1] = 3;
+            pieceData[i*10 + 2] = 0;
+            pieceData[i*10 + 3] = 0;
+            pieceData[i*10 + 4] = -1;
+            pieceData[i*10 + 5] = 0;  
+            pieceData[i*10 + 6] = 0;  
+            pieceData[i*10 + 8] = 1;  
+            pieceData[i*10 + 9] = Math.floor(nextRandom() * 7) + 1;
+
+            // 出現位置で既にブロックと衝突している場合は即座に死亡状態にする
+            if (!isValid(i, pieceData[i*10 + 0], 0, 3, 0)) {
+                statsData[i*4 + 0] = 2; // Dead
+            }
+        }
+
+        function isValid(i, type, rot, px, py) {
+            for(let k = 0; k < 4; k++) {
+                let bx = px + PIECES[type][rot][k][0];
+                let by = py + PIECES[type][rot][k][1];
+                if(bx < 0 || bx >= 10 || by >= 20) return false;
+                if(by >= 0 && boards[i * 200 + by * 10 + bx] !== 0) return false;
+            }
+            return true;
+        }
+
+        function applyGarbage(i, lines) {
+            let bOff = i * 200;
+            for(let y = 0; y < 20 - lines; y++) {
+                for(let x = 0; x < 10; x++) boards[bOff + y*10 + x] = boards[bOff + (y+lines)*10 + x];
+            }
+            for(let y = 20 - lines; y < 20; y++) {
+                let hole = Math.floor(nextRandom() * 10);
+                for(let x = 0; x < 10; x++) boards[bOff + y*10 + x] = (x === hole) ? 0 : 8;
+            }
+        }
+
+        function evalPiecePosition(i, type, wH, wHoles, wBump, wLines, bOff) {
+            let bestScore = -Infinity;
+            let bestX = 3, bestR = 0;
+
+            for(let r = 0; r < 4; r++) {
+                for(let x = -2; x <= 8; x++) {
+                    let dropY = 0;
+                    let valid = false;
+                    while(isValid(i, type, r, x, dropY)) {
+                        dropY++;
+                        valid = true;
+                    }
+                    if(!valid) continue;
+                    dropY--;
+
+                    for(let k = 0; k < 4; k++) {
+                        let by = dropY + PIECES[type][r][k][1];
+                        let bx = x + PIECES[type][r][k][0];
+                        if(by >= 0) boards[bOff + by * 10 + bx] = 1;
+                    }
+
+                    let heights = new Int32Array(10);
+                    let holes = 0;
+                    let lines = 0;
+                    for(let cx = 0; cx < 10; cx++) {
+                        let blockFound = false;
+                        for(let cy = 0; cy < 20; cy++) {
+                            if(boards[bOff + cy * 10 + cx] !== 0) {
+                                if(!blockFound) { heights[cx] = 20 - cy; blockFound = true; }
+                            } else if(blockFound) {
+                                holes++;
+                            }
+                        }
+                    }
+                    let aggHeight = 0, bumpiness = 0;
+                    for(let cx = 0; cx < 10; cx++) {
+                        aggHeight += heights[cx];
+                        if(cx < 9) bumpiness += Math.abs(heights[cx] - heights[cx+1]);
+                    }
+                    for(let cy = 0; cy < 20; cy++) {
+                        let isFull = true;
+                        for(let cx = 0; cx < 10; cx++) {
+                            if(boards[bOff + cy * 10 + cx] === 0) { isFull = false; break; }
+                        }
+                        if(isFull) lines++;
+                    }
+
+                    let score = wH * aggHeight + wHoles * holes + wBump * bumpiness + wLines * lines;
+                    if(score > bestScore) {
+                        bestScore = score;
+                        bestX = x;
+                        bestR = r;
+                    }
+
+                    for(let k = 0; k < 4; k++) {
+                        let by = dropY + PIECES[type][r][k][1];
+                        let bx = x + PIECES[type][r][k][0];
+                        if(by >= 0) boards[bOff + by * 10 + bx] = 0;
+                    }
+                }
+            }
+            return { score: bestScore, x: bestX, r: bestR };
+        }
+
+        function aiThink(i) {
+            let type = pieceData[i*10 + 0];
+            let holdType = pieceData[i*10 + 7];
+            let canHold = pieceData[i*10 + 8];
+            let nextType = pieceData[i*10 + 9];
+
+            let wH = genesData[i*4 + 0];
+            let wHoles = genesData[i*4 + 1];
+            let wBump = genesData[i*4 + 2];
+            let wLines = genesData[i*4 + 3];
+            let bOff = i * 200;
+
+            let currRes = evalPiecePosition(i, type, wH, wHoles, wBump, wLines, bOff);
+
+            if (canHold === 1) {
+                let evalType = holdType !== 0 ? holdType : nextType;
+                let holdRes = evalPiecePosition(i, evalType, wH, wHoles, wBump, wLines, bOff);
+
+                if (holdRes.score > currRes.score) {
+                    if (holdType === 0) {
+                        pieceData[i*10 + 7] = type;
+                        pieceData[i*10 + 0] = nextType;
+                        pieceData[i*10 + 9] = Math.floor(nextRandom() * 7) + 1; 
+                    } else {
+                        pieceData[i*10 + 7] = type;
+                        pieceData[i*10 + 0] = holdType;
+                    }
+                    pieceData[i*10 + 8] = 0; 
+                    pieceData[i*10 + 1] = 3; 
+                    pieceData[i*10 + 2] = 0; 
+                    pieceData[i*10 + 3] = 0; 
+                    
+                    pieceData[i*10 + 4] = holdRes.x;
+                    pieceData[i*10 + 5] = holdRes.r;
+                    return;
+                }
+            }
+
+            pieceData[i*10 + 4] = currRes.x;
+            pieceData[i*10 + 5] = currRes.r;
+        }
+
+        function processTick() {
+            let bestFitness = -1;
+            let bestIdx = -1;
+            for(let i = 0; i < activeCount; i++) {
+                let fitness = statsData[i*4 + 1] * 100 + statsData[i*4 + 2];
+                if(fitness > bestFitness) {
+                    bestFitness = fitness;
+                    bestIdx = i;
+                }
+            }
+
+            for(let i = 0; i < activeCount; i++) {
+                let state = statsData[i*4 + 0];
+                let bOff = i * 200;
+
+                if(state === 0) {
+                    if(bestIdx !== -1) {
+                        genesData[i*4+0] = genesData[bestIdx*4+0] + (nextRandom() - 0.5) * globalTemperature * 0.1;
+                        genesData[i*4+1] = genesData[bestIdx*4+1] + (nextRandom() - 0.5) * globalTemperature * 0.1;
+                        genesData[i*4+2] = genesData[bestIdx*4+2] + (nextRandom() - 0.5) * globalTemperature * 0.1;
+                        genesData[i*4+3] = genesData[bestIdx*4+3] + (nextRandom() - 0.5) * globalTemperature * 0.1;
+                    }
+                    for(let j=0; j<200; j++) boards[bOff + j] = 0;
+                    statsData[i*4 + 0] = 1;
+                    statsData[i*4 + 1] = 0;
+                    statsData[i*4 + 2] = 0;
+                    
+                    pieceData[i*10 + 7] = 0; 
+                    pieceData[i*10 + 9] = 0; 
+                    spawnPiece(i);
+                } else if(state === 1) {
+                    statsData[i*4 + 2]++;
+                    let garbage = statsData[i*4 + 3];
+                    if(garbage > 0) {
+                        applyGarbage(i, garbage);
+                        statsData[i*4 + 3] = 0;
+                    }
+
+                    if(pieceData[i*10 + 4] === -1) aiThink(i);
+
+                    let type = pieceData[i*10 + 0];
+                    let px = pieceData[i*10 + 1];
+                    let py = pieceData[i*10 + 2];
+                    let rot = pieceData[i*10 + 3];
+                    let tgtX = pieceData[i*10 + 4];
+                    let tgtR = pieceData[i*10 + 5];
+
+                    if (currentVelocity > 8) {
+                        // ワープ処理：安全な着地地点が見つかっている場合にのみワープを許可
+                        if (isValid(i, type, tgtR, tgtX, py)) {
+                            px = tgtX;
+                            rot = tgtR;
+                        }
+                        while(isValid(i, type, rot, px, py + 1)) py++;
+                    } else {
+                        // エクスプロイト修正：壁やブロックへのめり込み回転を厳密に禁止
+                        if (rot !== tgtR) {
+                            let nextRot = (rot + 1) % 4;
+                            if (isValid(i, type, nextRot, px, py)) {
+                                rot = nextRot;
+                            }
+                        }
+                        // 移動時のめり込みも禁止
+                        if (px < tgtX && isValid(i, type, rot, px + 1, py)) px++;
+                        else if (px > tgtX && isValid(i, type, rot, px - 1, py)) px--;
+                    }
+
+                    if(isValid(i, type, rot, px, py + 1)) {
+                        py++;
+                        pieceData[i*10 + 1] = px;
+                        pieceData[i*10 + 2] = py;
+                        pieceData[i*10 + 3] = rot;
+                    } else {
+                        let isDead = false;
+                        for(let k = 0; k < 4; k++) {
+                            let bx = px + PIECES[type][rot][k][0];
+                            let by = py + PIECES[type][rot][k][1];
+                            if(by < 0) {
+                                isDead = true;
+                            } else if(by < 20 && bx >= 0 && bx < 10) {
+                                // すでにブロックがある場所に上書きして固定されようとした場合も死亡
+                                if (boards[bOff + by * 10 + bx] !== 0) {
+                                    isDead = true;
+                                }
+                                boards[bOff + by * 10 + bx] = type;
+                            }
+                        }
+
+                        // ブロックが最上段 (y=0) 以下で固定された場合もゲームオーバー
+                        if (py <= 0 || isDead) {
+                            statsData[i*4 + 0] = 2; // Dead
+                        }
+
+                        if(statsData[i*4 + 0] === 1) {
+                            let linesCleared = 0;
+                            for(let y = 19; y >= 0; y--) {
+                                let full = true;
+                                for(let x = 0; x < 10; x++) {
+                                    if(boards[bOff + y * 10 + x] === 0) { full = false; break; }
+                                }
+                                if(full) {
+                                    linesCleared++;
+                                    for(let yy = y; yy > 0; yy--) {
+                                        for(let x = 0; x < 10; x++) boards[bOff + yy * 10 + x] = boards[bOff + (yy - 1) * 10 + x];
+                                    }
+                                    for(let x = 0; x < 10; x++) boards[bOff + x] = 0;
+                                    y++;
+                                }
+                            }
+                            if(linesCleared > 0) {
+                                statsData[i*4 + 1] += linesCleared;
+                                if(linesCleared > 1) {
+                                    let target = Math.floor(nextRandom() * activeCount);
+                                    statsData[target*4 + 3] += (linesCleared - 1);
+                                    totalPerturbations += (linesCleared - 1);
+                                }
+                            }
+                            spawnPiece(i);
+                        }
+                    }
+                } else if(state === 2) {
+                    // Dead状態で何もせず留まる（自動復活の廃止）
+                    pieceData[i*10+6]++;
+                }
+            }
+
+            globalTemperature *= 0.9999;
+            if(history) history.save(tickCount, boards, pieceData, statsData, genesData, currentSeed);
+            tickCount++;
+        }
+
+        // --- View & Controls ---
+
+        const canvas = document.getElementById('sim-canvas');
+        const ctx = canvas.getContext('2d', { alpha: false });
+        
+        canvas.addEventListener('click', (e) => {
+            if (selectedInstance !== -1) {
+                selectedInstance = -1; 
+                return;
+            }
+            
+            const rect = canvas.getBoundingClientRect();
+            const scale = Math.min(rect.width / 1600, rect.height / 900);
+            const drawW = 1600 * scale;
+            const drawH = 900 * scale;
+            const offsetX = (rect.width - drawW) / 2;
+            const offsetY = (rect.height - drawH) / 2;
+            
+            const x = (e.clientX - rect.left - offsetX) / scale;
+            const y = (e.clientY - rect.top - offsetY) / scale;
+            
+            if (x < 0 || x > 1600 || y < 0 || y > 900) return;
+            
+            const w = 1600;
+            const h = 900;
+            
+            // レイアウト計算 (1行100個固定)
+            let cols = 100;
+            let rows = Math.ceil(activeCount / cols);
+            let cellW = Math.max(1, Math.floor(w / (cols * 12)));
+            let cellH = Math.max(1, Math.floor(h / (rows * 22)));
+            let cell = Math.min(cellW, cellH);
+            if (cell < 1) cell = 1;
+            let bW = 10 * cell + 2;
+            let bH = 20 * cell + 2;
+            
+            let startX = Math.max(0, Math.floor((w - cols * bW) / 2));
+            let startY = Math.max(0, Math.floor((h - rows * bH) / 2));
+            
+            let c = Math.floor((x - startX) / bW);
+            let r = Math.floor((y - startY) / bH);
+            
+            if (c >= 0 && c < cols && r >= 0 && r < rows) {
+                let idx = r * cols + c;
+                if (idx >= 0 && idx < activeCount) {
+                    selectedInstance = idx;
+                }
+            }
+        });
+        
+        const sliderVel = document.getElementById('velocity-slider');
+        const txtVel = document.getElementById('velocity-val');
+        const btnInstDec = document.getElementById('btn-inst-dec');
+        const btnInstInc = document.getElementById('btn-inst-inc');
+        const btnRb1 = document.getElementById('btn-rollback-1');
+        const btnRb10 = document.getElementById('btn-rollback-10');
+
+        const statTick = document.getElementById('stat-tick');
+        const statFit = document.getElementById('stat-fit');
+        const statTemp = document.getElementById('stat-temp');
+        const statFbm = document.getElementById('stat-fbm');
+        const statDead = document.getElementById('stat-dead');
+
+        sliderVel.addEventListener('input', (e) => {
+            currentVelocity = parseInt(e.target.value, 10);
+            txtVel.innerText = `${currentVelocity} / 10`;
+        });
+
+        function modifyInstances(delta) {
+            let next = Math.max(10, Math.min(MAX_INSTANCES, activeCount + delta));
+            initSystem(next);
+        }
+        btnInstDec.addEventListener('click', () => modifyInstances(-100));
+        btnInstInc.addEventListener('click', () => modifyInstances(100));
+
+        function handleRollback(seconds) {
+            if(!history) return;
+            const frames = seconds * 60;
+            const targetTick = Math.max(0, tickCount - frames);
+            tickCount = targetTick;
+            currentSeed = history.load(targetTick, boards, pieceData, statsData, genesData);
+            updateTelemetry();
+        }
+        btnRb1.addEventListener('click', () => handleRollback(1));
+        btnRb10.addEventListener('click', () => handleRollback(10));
+
+        function updateTelemetry() {
+            statTick.innerText = tickCount;
+            let totalFit = 0;
+            let deadCount = 0;
+            for(let i=0; i<activeCount; i++) {
+                totalFit += statsData[i*4+1];
+                if(statsData[i*4+0] === 2) {
+                    deadCount++;
+                }
+            }
+            statFit.innerText = activeCount > 0 ? (totalFit / activeCount).toFixed(2) : "0.00";
+            statTemp.innerText = globalTemperature.toFixed(4);
+            statFbm.innerText = totalPerturbations;
+            statDead.innerText = `${deadCount} / ${activeCount}`;
+        }
+
+        let lastStatsUpdate = 0;
+        function loop(time) {
+            let steps = 1;
+            if (currentVelocity >= 9) steps = 10;
+            else if (currentVelocity >= 7) steps = 5;
+            else if (currentVelocity >= 4) steps = 2;
+            else if (currentVelocity <= 2) steps = 0;
+
+            let shouldProcess = true;
+            if (currentVelocity === 1 && tickCount % 5 !== 0) shouldProcess = false;
+            if (currentVelocity === 2 && tickCount % 2 !== 0) shouldProcess = false;
+
+            if(shouldProcess) {
+                for(let s=0; s<steps; s++) {
+                    processTick();
+                }
+            }
+
+            if(activeCount > 0) {
+                const w = canvas.width;
+                const h = canvas.height;
+                
+                // レイアウト計算 (1行100個固定)
+                let cols = 100;
+                let rows = Math.ceil(activeCount / cols);
+                let cellW = Math.max(1, Math.floor(w / (cols * 12)));
+                let cellH = Math.max(1, Math.floor(h / (rows * 22)));
+                let cell = Math.min(cellW, cellH);
+                if (cell < 1) cell = 1; // 視認性のための最低保証
+                let bW = 10 * cell + 2;
+                let bH = 20 * cell + 2;
+                
+                let startX = Math.max(0, Math.floor((w - cols * bW) / 2));
+                let startY = Math.max(0, Math.floor((h - rows * bH) / 2));
+
+                let imgData = ctx.getImageData(0, 0, w, h);
+                let buf32 = new Uint32Array(imgData.data.buffer);
+                buf32.fill(0xFF000000);
+
+                const drawRect = (cx, cy, cw, ch, col) => {
+                    if(cx < 0 || cy < 0 || cx+cw >= w || cy+ch >= h) return;
+                    for(let dy=0; dy<ch; dy++) {
+                        let idx = (cy+dy)*w + cx;
+                        for(let dx=0; dx<cw; dx++) buf32[idx+dx] = col;
+                    }
+                };
+
+                for(let i=0; i<activeCount; i++) {
+                    let c = i % cols;
+                    let r = Math.floor(i / cols);
+                    let ox = startX + c * bW + 2;
+                    let oy = startY + r * bH + 2;
+
+                    let state = statsData[i*4];
+                    let bgCol = state === 2 ? PALETTE[9] : PALETTE[0];
+
+                    for(let y=0; y<20; y++) {
+                        for(let x=0; x<10; x++) {
+                            let val = boards[i*200 + y*10 + x];
+                            let color = val === 0 ? bgCol : PALETTE[val];
+                            drawRect(ox + x*cell, oy + y*cell, cell, cell, color);
+                        }
+                    }
+
+                    if(state === 1) {
+                        let type = pieceData[i*10+0];
+                        let px = pieceData[i*10+1];
+                        let py = pieceData[i*10+2];
+                        let rot = pieceData[i*10+3];
+                        for(let k=0; k<4; k++) {
+                            let bx = px + PIECES[type][rot][k][0];
+                            let by = py + PIECES[type][rot][k][1];
+                            if(bx>=0 && bx<10 && by>=0 && by<20) {
+                                drawRect(ox + bx*cell, oy + by*cell, cell, cell, PALETTE[type]);
+                            }
+                        }
+                    }
+                }
+                ctx.putImageData(imgData, 0, 0);
+
+                // --- ズーム（拡大）オーバーレイ描画 ---
+                if (selectedInstance !== -1 && selectedInstance < activeCount) {
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+                    ctx.fillRect(0, 0, w, h);
+                    
+                    let zoomCell = Math.min(Math.floor(w / 40), Math.floor(h / 30));
+                    let zbW = 10 * zoomCell;
+                    let zbH = 20 * zoomCell;
+                    let ox = Math.floor((w - zbW) / 2);
+                    let oy = Math.floor((h - zbH) / 2);
+                    
+                    let i = selectedInstance;
+                    let state = statsData[i*4];
+                    let bgColHex = state === 2 ? HEX_PALETTE[9] : HEX_PALETTE[0];
+                    
+                    ctx.strokeStyle = '#10b981';
+                    ctx.lineWidth = 4;
+                    ctx.strokeRect(ox - 2, oy - 2, zbW + 4, zbH + 4);
+                    
+                    for(let y=0; y<20; y++) {
+                        for(let x=0; x<10; x++) {
+                            let val = boards[i*200 + y*10 + x];
+                            ctx.fillStyle = val === 0 ? bgColHex : HEX_PALETTE[val];
+                            ctx.fillRect(ox + x*zoomCell, oy + y*zoomCell, zoomCell-1, zoomCell-1);
+                        }
+                    }
+                    
+                    if(state === 1) {
+                        let type = pieceData[i*10+0];
+                        let px = pieceData[i*10+1];
+                        let py = pieceData[i*10+2];
+                        let rot = pieceData[i*10+3];
+                        ctx.fillStyle = HEX_PALETTE[type];
+                        for(let k=0; k<4; k++) {
+                            let bx = px + PIECES[type][rot][k][0];
+                            let by = py + PIECES[type][rot][k][1];
+                            if(bx>=0 && bx<10 && by>=0 && by<20) {
+                                ctx.fillRect(ox + bx*zoomCell, oy + by*zoomCell, zoomCell-1, zoomCell-1);
+                            }
+                        }
+                    }
+                    
+                    let holdType = pieceData[i*10+7];
+                    ctx.fillStyle = '#10b981';
+                    ctx.font = 'bold 24px monospace';
+                    ctx.fillText('HOLD', ox - 7*zoomCell, oy + 2*zoomCell);
+                    if (holdType !== 0) {
+                        ctx.fillStyle = HEX_PALETTE[holdType];
+                        for(let k=0; k<4; k++) {
+                            let bx = PIECES[holdType][0][k][0];
+                            let by = PIECES[holdType][0][k][1];
+                            ctx.fillRect(ox - 7*zoomCell + bx*zoomCell, oy + 3*zoomCell + by*zoomCell, zoomCell-1, zoomCell-1);
+                        }
+                    }
+                    
+                    let nextType = pieceData[i*10+9];
+                    ctx.fillStyle = '#10b981';
+                    ctx.fillText('NEXT', ox + 12*zoomCell, oy + 2*zoomCell);
+                    if (nextType !== 0) {
+                        ctx.fillStyle = HEX_PALETTE[nextType];
+                        for(let k=0; k<4; k++) {
+                            let bx = PIECES[nextType][0][k][0];
+                            let by = PIECES[nextType][0][k][1];
+                            ctx.fillRect(ox + 12*zoomCell + bx*zoomCell, oy + 3*zoomCell + by*zoomCell, zoomCell-1, zoomCell-1);
+                        }
+                    }
+                    
+                    ctx.fillStyle = '#10b981';
+                    ctx.font = '16px monospace';
+                    let fit = statsData[i*4+1] * 100 + statsData[i*4+2];
+                    ctx.fillText(`ID:      ${i}`, ox + 12*zoomCell, oy + 10*zoomCell);
+                    ctx.fillText(`Fitness: ${fit}`, ox + 12*zoomCell, oy + 11.5*zoomCell);
+                    ctx.fillText(`Lines:   ${statsData[i*4+1]}`, ox + 12*zoomCell, oy + 13*zoomCell);
+                    ctx.fillText(`Garbage: ${statsData[i*4+3]}`, ox + 12*zoomCell, oy + 14.5*zoomCell);
+                    ctx.fillText(`State:   ${state===0?'Birth':state===1?'Drive':'Rest (Dead)'}`, ox + 12*zoomCell, oy + 16*zoomCell);
+                    
+                    ctx.fillStyle = '#10b98188';
+                    ctx.fillText(`Click anywhere to close`, ox + 12*zoomCell, oy + 19*zoomCell);
+                }
+            }
+
+            if (time - lastStatsUpdate > 500) {
+                updateTelemetry();
+                lastStatsUpdate = time;
+            }
+
+            requestAnimationFrame(loop);
+        }
+
+        initSystem(1000);
+        requestAnimationFrame(loop);
+
+    </script>
+</body>
+</html>
