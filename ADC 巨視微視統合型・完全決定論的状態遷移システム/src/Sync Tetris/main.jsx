@@ -1094,7 +1094,8 @@ export default function App() {
 
   // --- Render Utilities ---
   const Block = ({ type }) => {
-    const sizeClasses = "w-[14px] h-[14px] min-[375px]:w-[18px] min-[375px]:h-[18px] sm:w-[22px] sm:h-[22px] md:w-[24px] md:h-[24px]";
+    // 盤面が画面内に収まるようにスマホのブロックサイズを小さく調整
+    const sizeClasses = "w-[12px] h-[12px] min-[375px]:w-[14px] min-[375px]:h-[14px] sm:w-[20px] sm:h-[20px] md:w-[24px] md:h-[24px]";
     if (!type || type === "") return <div className={`${sizeClasses} border border-neutral-800/40 bg-neutral-900/40`} />;
     const isGhost = type.includes('_GHOST');
     const baseType = isGhost ? type.replace('_GHOST', '') : type;
@@ -1126,7 +1127,7 @@ export default function App() {
         <div className="flex flex-col items-center justify-center bg-neutral-900/50 border border-neutral-800 p-1 min-h-[2.5rem] min-w-[2.5rem] md:min-h-[3rem] md:min-w-[3rem]">
           {shape ? shape.map((row, y) => (
             <div key={y} className="flex">
-              {row.map((cell, x) => cell ? <div key={`${x}-${y}`} className={`w-[8px] h-[8px] min-[375px]:w-[10px] min-[375px]:h-[10px] md:w-3 md:h-3 border border-black/50 ${TETROMINOS[type].color} shadow-inner`} /> : <div key={`${x}-${y}`} className="w-[8px] h-[8px] min-[375px]:w-[10px] min-[375px]:h-[10px] md:w-3 md:h-3" />)}
+              {row.map((cell, x) => cell ? <div key={`${x}-${y}`} className={`w-[8px] h-[8px] md:w-3 md:h-3 border border-black/50 ${TETROMINOS[type].color} shadow-inner`} /> : <div key={`${x}-${y}`} className="w-[8px] h-[8px] md:w-3 md:h-3" />)}
             </div>
           )) : <div className="text-neutral-700 text-xs">-</div>}
         </div>
@@ -1136,12 +1137,12 @@ export default function App() {
 
   const PlayerPanel = ({ title, board, score, holdPiece, nextPieces, isYou, localGameOverVisible, isPanelFrozen, isPanelAccel, vEffect, sp, onHoldClick, opponentPanel, mobileSkillButtons }) => (
     <div className={`flex flex-col items-center p-1 md:p-4 border-neutral-800 ${isYou ? 'md:border-l' : 'md:border-r'} ${isPanelAccel ? 'shadow-[inset_0_0_50px_rgba(249,115,22,0.15)] border-orange-500/50' : ''} w-full`}>
-       <div className="flex justify-between items-center w-full max-w-[260px] md:max-w-[300px] mb-1 md:mb-4 px-2">
+       <div className="flex justify-between items-center w-full max-w-[260px] md:max-w-[300px] mb-2 md:mb-4 px-2 shrink-0">
          <h2 className="text-[10px] md:text-sm text-[#2CB4AD] tracking-widest uppercase font-bold">{title}</h2>
          {skillsEnabled && <div className="text-[8px] md:text-[10px] font-bold bg-neutral-800 px-2 py-0.5 rounded text-neutral-300 border border-neutral-700">SP: <span className="text-cyan-400 text-xs">{sp}</span></div>}
        </div>
        
-       <div className="flex gap-1 md:gap-4 items-start w-full px-1 justify-center">
+       <div className="flex gap-1 md:gap-4 items-start w-full px-1 justify-center shrink-0">
          {/* HOLD Area */}
          <div className="flex-1 flex flex-col items-end pt-1 md:pt-4 relative min-w-[50px]">
             <MiniBoard type={holdPiece} label="HOLD" />
@@ -1153,7 +1154,7 @@ export default function App() {
                 HOLD
               </button>
             )}
-            {/* 変更箇所: 相手盤面をHOLDボタンの真下に配置 */}
+            {/* 相手盤面をHOLDボタンの真下に配置 */}
             {isYou && opponentPanel && (
               <div className="md:hidden mt-4 w-full flex justify-end">
                  <div className="origin-top-right scale-[0.22] opacity-80 pointer-events-none w-[200px]">
@@ -1164,7 +1165,8 @@ export default function App() {
          </div>
 
          {/* Main Board */}
-         <div className={`shrink-0 relative ${isYou && boardShake ? 'animate-shake' : ''} ${vEffect === 'REWIND' ? 'animate-rewind' : ''} ${vEffect === 'ERASE' ? 'animate-glitch' : ''}`}>
+         {/* 盤面上のみ touch-none にして操作時に画面スクロールしないようにする */}
+         <div className={`shrink-0 relative touch-none ${isYou && boardShake ? 'animate-shake' : ''} ${vEffect === 'REWIND' ? 'animate-rewind' : ''} ${vEffect === 'ERASE' ? 'animate-glitch' : ''}`}>
            <BoardDisplay boardData={board} />
            {isYou && boardFlash && <div className="absolute inset-0 animate-flash pointer-events-none" />}
            {isPanelFrozen && <div className="absolute inset-0 bg-blue-900/40 backdrop-blur-[1px] flex items-center justify-center border-2 border-blue-400 z-10"><div className="bg-black/80 px-2 py-1 text-blue-300 font-bold tracking-widest text-[10px] md:text-sm border border-blue-500 animate-pulse">TIME STOPPED</div></div>}
@@ -1184,12 +1186,13 @@ export default function App() {
          </div>
        </div>
 
-       <div className="mt-1 md:mt-4 text-[11px] md:text-sm text-neutral-500 tracking-wider font-bold text-center">
-         SCORE: <br className="md:hidden"/><span className="text-[#F6AA00] text-lg md:text-2xl">{score}</span>
+       {/* SCORE 以下 */}
+       <div className="mt-1 md:mt-4 text-[11px] md:text-sm text-neutral-500 tracking-wider font-bold text-center shrink-0 flex items-center justify-center md:flex-col gap-2 md:gap-0">
+         <span>SCORE:</span> <span className="text-[#F6AA00] text-lg md:text-2xl">{score}</span>
        </div>
        
        {isYou && mobileSkillButtons && (
-          <div className="md:hidden w-full px-2 mt-2">
+          <div className="md:hidden w-full px-2 mt-1 shrink-0 pointer-events-auto">
             {mobileSkillButtons}
           </div>
        )}
@@ -1223,7 +1226,8 @@ export default function App() {
     <>
       <style>{STYLES}</style>
       <div 
-        className={`flex flex-col md:flex-row h-[100dvh] w-full bg-[#0a0a0a] text-[#d4d4d4] font-sans overflow-hidden select-none relative ${(gameState === 'playing' || gameState === 'waiting') ? 'touch-none' : ''}`}
+        // overflow-y-auto でスクロールできるように変更。touch-noneは削除し、盤面などのみに適用
+        className={`flex flex-col md:flex-row h-[100dvh] w-full bg-[#0a0a0a] text-[#d4d4d4] font-sans overflow-y-auto select-none relative`}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
@@ -1246,7 +1250,7 @@ export default function App() {
         <div className={
           gameState === 'menu'
             ? 'absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#0a0a0a] overflow-y-auto'
-            : 'w-full md:w-80 flex flex-col items-center p-4 sm:p-6 z-10 shrink-0 bg-transparent md:bg-[#111] absolute top-1 md:relative md:top-auto pointer-events-none justify-start md:justify-center'
+            : 'w-full md:w-80 flex flex-col items-center p-1 sm:p-6 z-10 shrink-0 bg-transparent md:bg-[#111] pointer-events-none justify-start md:justify-center'
         }>
            <div className={`text-center mb-4 pointer-events-auto ${gameState !== 'menu' && 'hidden md:block'}`}>
              <h1 className="text-2xl sm:text-3xl font-black text-[#2CB4AD] mb-1 tracking-tighter">SYNC TETRIS</h1>
@@ -1284,7 +1288,7 @@ export default function App() {
            )}
 
            {gameState === 'waiting' && (
-             <div className="text-center w-full flex flex-col items-center pointer-events-auto bg-black/60 md:bg-transparent p-2 rounded mt-8 md:mt-0">
+             <div className="text-center w-full flex flex-col items-center pointer-events-auto bg-black/60 md:bg-transparent p-2 rounded mt-2 mb-4 md:mt-0 md:mb-0 shrink-0">
                <div className="text-[10px] md:text-sm text-[#2CB4AD] mb-1 animate-pulse tracking-widest font-bold">WAITING FOR PLAYER...</div>
                <div className="text-[10px] md:text-xs text-neutral-500">ROOM: <span className="font-mono text-neutral-300">{roomId}</span></div>
                <button onClick={handleLeaveMatch} className="mt-2 w-full max-w-[120px] md:max-w-xs bg-red-900/60 text-red-200 font-bold py-1 md:py-2 hover:bg-red-800/60 rounded text-[9px] md:text-xs">CANCEL</button>
@@ -1292,7 +1296,7 @@ export default function App() {
            )}
 
            {gameState === 'playing' && (
-             <div className="text-center w-full flex flex-col items-center mb-0 md:mb-4 pointer-events-auto bg-black/60 md:bg-transparent p-1 rounded mt-8 md:mt-0">
+             <div className="text-center w-full flex flex-col items-center pointer-events-auto bg-black/60 md:bg-transparent p-1 rounded mt-2 mb-4 md:mt-0 md:mb-0 shrink-0">
                <div className="text-[10px] md:text-sm text-[#03AF7A] mb-1 tracking-widest font-bold border-b border-[#03AF7A]/30 pb-1 w-full">CONNECTED</div>
                <div className="text-[10px] md:text-xs text-neutral-500">ROOM: <span className="font-mono text-neutral-400">{roomId}</span></div>
              </div>
@@ -1324,8 +1328,8 @@ export default function App() {
         </div>
 
         {/* --- Right Panel (Player) & Controls Container --- */}
-        <div className="flex-1 flex flex-col w-full h-full z-0 relative overflow-hidden pointer-events-none">
-           <div className="flex-1 flex flex-col justify-center items-center w-full min-h-0 pointer-events-none pt-2 md:pt-0">
+        <div className="flex-1 flex flex-col w-full h-full z-0 relative pointer-events-none">
+           <div className="flex flex-col justify-start md:justify-center items-center w-full min-h-0 pointer-events-none pt-2 md:pt-0">
                <PlayerPanel 
                   title="PLAYER 1 (YOU)" board={playerDisplayBoard} score={engine.score} holdPiece={engine.holdPiece} 
                   nextPieces={engine.nextPieces} sp={engine.sp} isYou={true} localGameOverVisible={engine.gameOver && !gameResult} 
@@ -1337,9 +1341,9 @@ export default function App() {
 
            {/* --- Mobile Controls (Flex Bottom) --- */}
            {(gameState === 'playing' || gameState === 'waiting') && !gameResult && (
-             <div className="md:hidden w-full px-2 pb-2 pt-1 z-30 flex flex-col gap-1 shrink-0 bg-transparent pointer-events-auto">
-               <div className="text-[9px] text-center text-neutral-500 mt-1 pointer-events-none font-bold tracking-widest leading-tight">
-                  TAP (L/R/C): Move & Rotate<br/>SWIPE UP: Hard Drop | SWIPE DOWN: Soft Drop
+             <div className="md:hidden w-full px-2 pb-2 pt-1 flex flex-col gap-1 shrink-0 pointer-events-none mt-auto mb-2">
+               <div className="text-[9px] text-center text-neutral-500 font-bold tracking-widest leading-tight">
+                 TAP: Move/Rotate | SWIPE UP: Hard Drop | SWIPE DOWN: Soft Drop
                </div>
              </div>
            )}
