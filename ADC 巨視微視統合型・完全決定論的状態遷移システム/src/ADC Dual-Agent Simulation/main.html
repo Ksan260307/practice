@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ADC 完全決定論的状態遷移システム - パターンA (Autonomous N-gram Model)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;600&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap');
+        
+        body { font-family: 'Fira Code', monospace; background-color: #020617; color: #4ade80; overflow: hidden; }
+        .chat-font { font-family: 'Noto Sans JP', sans-serif; }
+        
+        .crt::before {
+            content: " "; display: block; position: absolute; top: 0; left: 0; bottom: 0; right: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            z-index: 50; background-size: 100% 2px, 3px 100%; pointer-events: none;
+        }
+        .hex-display { font-size: 0.75rem; letter-spacing: 0.1em; color: #22d3ee; }
+        
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.3); }
+        #persistent-log-content::-webkit-scrollbar-thumb { background: #166534; }
+        
+        .bubble-left::before {
+            content: ""; position: absolute; top: 10px; left: -6px;
+            border: 6px solid transparent; border-right-color: #ffffff; border-left: 0; border-top: 0; margin-top: -3px;
+        }
+        .bubble-right::before {
+            content: ""; position: absolute; top: 10px; right: -6px;
+            border: 6px solid transparent; border-left-color: #86efac; border-right: 0; border-top: 0; margin-top: -3px;
+        }
+    </style>
+</head>
+<body class="crt flex flex-col h-screen w-screen selection:bg-green-900 selection:text-green-100">
+
+    <!-- MAIN SIMULATION AREA -->
+    <div class="flex-grow flex overflow-hidden w-full relative z-10">
+        
+        <!-- Agent A Panel -->
+        <div class="w-1/4 flex flex-col border-r border-green-900 p-4 bg-slate-950 z-20 shadow-[5px_0_15px_rgba(0,0,0,0.5)]">
+            <div class="text-xs text-green-600 mb-1">Subject: Logical Construct</div>
+            <h2 class="text-xl font-bold mb-4 text-cyan-400">Agent-A [Logic]</h2>
+            
+            <div class="mb-4 bg-slate-900 p-3 rounded border border-green-900/50 shadow-inner">
+                <div class="text-xs text-slate-400 mb-1">64bit State Vector (SoA)</div>
+                <div id="state-a-hex" class="hex-display mb-2">0x0000000000000000</div>
+                
+                <div class="grid grid-cols-2 gap-2 text-sm mt-3">
+                    <div class="text-slate-500">CVD Tempo:</div>
+                    <div id="intensity-a" class="text-right font-mono text-cyan-200">Normal</div>
+                    <div class="text-slate-500">CVD Phase:</div>
+                    <div class="text-right">
+                        <div class="w-full bg-slate-800 h-1.5 mt-1.5 rounded overflow-hidden relative">
+                             <div id="phase-bar-a" class="bg-cyan-400 h-full w-0 shadow-[0_0_5px_rgba(34,211,238,0.5)] transition-all duration-75"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex-grow flex flex-col overflow-hidden">
+                <div class="text-xs text-slate-400 mb-1 border-b border-green-900 pb-1">Cognitive Network (RCM Decay)</div>
+                <div class="text-xs text-cyan-300 mb-2 mt-1">
+                    Vocab Size: <span id="vocab-size-a" class="font-bold">0</span><br>
+                    Synapse Links: <span id="links-a" class="font-bold">0</span>
+                </div>
+                <div id="vocab-a" class="flex-grow overflow-y-auto text-xs space-y-1 text-green-400/80 font-mono"></div>
+            </div>
+        </div>
+
+        <!-- FBM Field Canvas & Chat -->
+        <div class="w-2/4 flex flex-col relative z-0">
+            <div class="absolute top-4 left-4 text-xs text-slate-500 z-20 pointer-events-none drop-shadow-md">
+                [PDE] Perceptual Dynamics Engine v2.9<br>
+                Mode: Syntactic Crossover & Knowledge Integration<br>
+                Status: <span id="api-status" class="text-green-500">API SAFE</span><br>
+                Global Tick: <span id="global-tick" class="text-cyan-400 font-bold">0</span>
+            </div>
+            
+            <canvas id="fbm-canvas" class="w-full flex-grow cursor-crosshair bg-slate-900"></canvas>
+            
+            <div class="h-64 shrink-0 bg-[#7494C0] flex flex-col z-10 relative shadow-[0_-10px_30px_rgba(0,0,0,0.5)]">
+                <div class="h-8 bg-[#2C2C2C] px-4 flex justify-between items-center shadow-sm z-10">
+                    <span class="text-white text-xs font-bold tracking-wider">Axiom Dynamics Core - Observation Room</span>
+                    <div class="flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse drop-shadow-[0_0_3px_rgba(239,68,68,0.8)]"></span>
+                        <span class="text-[10px] text-gray-300">REC</span>
+                    </div>
+                </div>
+                
+                <div id="log-panel" class="flex-grow overflow-y-auto p-4 space-y-4 chat-font">
+                    <!-- 会話ログと学習通知が挿入されます -->
+                </div>
+                
+                <div class="h-10 bg-white flex items-center px-2 shadow-[0_-2px_5px_rgba(0,0,0,0.05)]">
+                    <div class="text-gray-400 p-2"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></div>
+                    <div class="flex-grow h-7 bg-gray-100 rounded-full mx-2 flex items-center px-3 text-xs text-gray-400 animate-pulse">Processing signals...</div>
+                    <div class="text-[#06C755] p-2"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Agent B Panel -->
+        <div class="w-1/4 flex flex-col border-l border-green-900 p-4 bg-slate-950 z-20 shadow-[-5px_0_15px_rgba(0,0,0,0.5)]">
+            <div class="text-xs text-green-600 mb-1 text-right">Subject: Spatial Entity</div>
+            <h2 class="text-xl font-bold mb-4 text-fuchsia-400 text-right">Agent-B [Space]</h2>
+            
+            <div class="mb-4 bg-slate-900 p-3 rounded border border-green-900/50 shadow-inner">
+                <div class="text-xs text-slate-400 mb-1 text-right">64bit State Vector (SoA)</div>
+                <div id="state-b-hex" class="hex-display mb-2 text-right">0x0000000000000000</div>
+                
+                <div class="grid grid-cols-2 gap-2 text-sm mt-3">
+                    <div class="text-slate-500">CVD Tempo:</div>
+                    <div id="intensity-b" class="text-right font-mono text-fuchsia-200">Normal</div>
+                    <div class="text-slate-500">CVD Phase:</div>
+                    <div class="text-right">
+                        <div class="w-full bg-slate-800 h-1.5 mt-1.5 rounded overflow-hidden relative">
+                             <div id="phase-bar-b" class="bg-fuchsia-400 h-full w-0 shadow-[0_0_5px_rgba(232,121,249,0.5)] transition-all duration-75"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex-grow flex flex-col overflow-hidden">
+                <div class="text-xs text-slate-400 mb-1 border-b border-green-900 pb-1 text-right">Cognitive Network (RCM Decay)</div>
+                <div class="text-xs text-fuchsia-300 mb-2 mt-1 text-right">
+                    Vocab Size: <span id="vocab-size-b" class="font-bold">0</span><br>
+                    Synapse Links: <span id="links-b" class="font-bold">0</span>
+                </div>
+                <div id="vocab-b" class="flex-grow overflow-y-auto text-xs space-y-1 text-green-400/80 text-right font-mono"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- PERSISTENT TERMINAL CONSOLE -->
+    <div class="h-40 shrink-0 bg-[#000000] border-t border-green-900 flex flex-col relative z-30 shadow-[0_-5px_20px_rgba(0,0,0,0.8)]">
+        <div class="h-7 bg-[#020617] flex justify-between items-center px-4 border-b border-green-900/50">
+            <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse shadow-[0_0_5px_#22c55e]"></span>
+                <span class="text-[10px] text-green-500 font-bold tracking-widest uppercase">System Terminal Logger</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <input type="file" id="import-vocab-file" accept=".json" class="hidden">
+                <button id="btn-import-vocab" class="text-[10px] text-blue-300 hover:text-white hover:bg-blue-800 bg-blue-900/30 px-3 py-0.5 rounded border border-blue-700/50 transition-colors cursor-pointer" title="Load learned vocabulary state">
+                    IMPORT VOCAB
+                </button>
+                <button id="btn-export-vocab" class="text-[10px] text-blue-300 hover:text-white hover:bg-blue-800 bg-blue-900/30 px-3 py-0.5 rounded border border-blue-700/50 transition-colors cursor-pointer" title="Save learned vocabulary state">
+                    EXPORT VOCAB
+                </button>
+                <button id="btn-reset-vocab" class="text-[10px] text-red-300 hover:text-white hover:bg-red-800 bg-red-900/30 px-3 py-0.5 rounded border border-red-700/50 transition-colors cursor-pointer" title="Delete auto-backup and reset">
+                    RESET
+                </button>
+                <button id="download-log" class="text-[10px] text-green-300 hover:text-white hover:bg-green-800 bg-green-900/30 px-3 py-0.5 rounded border border-green-700/50 transition-colors cursor-pointer">
+                    EXPORT LOG (.TXT)
+                </button>
+            </div>
+        </div>
+        <div id="persistent-log-content" class="flex-grow overflow-y-auto p-2 pl-4 text-[10px] font-mono text-green-400/80 leading-tight space-y-0.5">
+            <!-- Raw logs injected here -->
+        </div>
+    </div>
+
+<script>
+/**
+ * ADC 巨視微視統合型・完全決定論的状態遷移システム 
+ * v2.9: 基礎文法の付与と、未知概念の文脈化による「構文の自律進化」モデル
+ */
+class PRNG {
+    constructor(seed) { this.seed = seed >>> 0; }
+    next() {
+        let x = this.seed;
+        x ^= x << 13; x ^= x >>> 17; x ^= x << 5;
+        this.seed = x >>> 0;
+        return (x >>> 0) / 4294967296;
+    }
+    range(min, max) { return min + (this.next() * (max - min)); }
+    intRange(min, max) { return Math.floor(this.range(min, max + 1)); }
+}
+
+const rng = new PRNG(88888); 
+
+let globalTick = 0;
+let currentTurn = 'A';
+let chatHistory = []; 
+let lastSearchTime = 0;
+const SEARCH_COOLDOWN = 10000; 
+const STORAGE_KEY = 'adc_simulation_backup_v2_9'; // 新しい構造のためキーを更新
+
+// ==========================================
+// Persistent Log
+// ==========================================
+let fullLogArray = [];
+const terminalContent = document.getElementById('persistent-log-content');
+
+function logToTerminal(rawText) {
+    fullLogArray.push(rawText);
+    const line = document.createElement('div');
+    line.textContent = rawText;
+    terminalContent.appendChild(line);
+    if (terminalContent.childElementCount > 500) terminalContent.removeChild(terminalContent.firstChild);
+    terminalContent.scrollTop = terminalContent.scrollHeight;
+}
+
+document.getElementById('download-log').addEventListener('click', () => {
+    const header = "=========================================================\n" +
+                   " ADC Simulation Persistent Log (v2.9 Syntactic Evolution)\n" +
+                   "=========================================================\n\n";
+    const blob = new Blob([header + fullLogArray.join('\n')], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `adc_simulation_log_${Date.now()}.txt`; a.click();
+    URL.revokeObjectURL(url);
+});
+
+// ==========================================
+// Auto Save / Auto Load System
+// ==========================================
+function autoSave() {
+    const data = { agentA: agentA.exportState(), agentB: agentB.exportState() };
+    try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    } catch (e) {
+        logToTerminal(`[SYSTEM ERROR] Failed to auto-save: ${e.message}`);
+    }
+}
+
+function autoLoad() {
+    const json = localStorage.getItem(STORAGE_KEY);
+    if (json) {
+        try {
+            const data = JSON.parse(json);
+            if (data.agentA) agentA.importState(data.agentA);
+            if (data.agentB) agentB.importState(data.agentB);
+        } catch (e) {
+            logToTerminal(`[SYSTEM ERROR] Auto-load failed: ${e.message}`);
+        }
+    }
+}
+
+document.getElementById('btn-reset-vocab').addEventListener('click', () => {
+    if(confirm("すべての学習記憶（バックアップ）を削除し、初期状態に戻しますか？")) {
+        localStorage.removeItem(STORAGE_KEY);
+        location.reload();
+    }
+});
+
+// ==========================================
+// External Network API
+// ==========================================
+class ExternalNetwork {
+    static async searchNewConcept() {
+        const now = Date.now();
+        if (now - lastSearchTime < SEARCH_COOLDOWN) return null;
+        
+        lastSearchTime = now;
+        const apiStatusEl = document.getElementById('api-status');
+        if (apiStatusEl) {
+            apiStatusEl.innerText = "SEARCHING...";
+            apiStatusEl.className = "text-yellow-500 font-bold animate-pulse";
+        }
+
+        try {
+            const res = await fetch('https://ja.wikipedia.org/w/api.php?action=query&list=random&rnnamespace=0&rnlimit=1&format=json&origin=*');
+            const data = await res.json();
+            
+            if (apiStatusEl) { apiStatusEl.innerText = "API SAFE"; apiStatusEl.className = "text-green-500"; }
+            if (data && data.query && data.query.random) return data.query.random[0].title;
+        } catch (e) {
+            if (apiStatusEl) {
+                apiStatusEl.innerText = "API ERROR"; apiStatusEl.className = "text-red-500";
+                setTimeout(() => { if (apiStatusEl) { apiStatusEl.innerText = "API SAFE"; apiStatusEl.className = "text-green-500"; } }, 3000);
+            }
+        }
+        return null;
+    }
+}
+
+// ==========================================
+// N-gram Language Model with RCM Decay
+// ==========================================
+class NGramModel {
+    constructor(rngInst) {
+        this.rng = rngInst;
+        // bigrams: Map<string, Array<{next: string, life: number}>>
+        this.bigrams = new Map();
+        this.starts = [];
+        this.vocab = new Set();
+        this.recentLearned = [];
+    }
+
+    // weightパラメータで、基礎文法や重要な学習の定着度を制御する
+    train(text, weight = 1.0) {
+        if (!text) return;
+        
+        // 正規化：句読点の前にスペースを入れ、確実に形態素を分離する
+        let normalized = text.replace(/([。！？、])/g, ' $1 ').trim();
+        const tokens = normalized.split(/\s+/).filter(t => t.length > 0);
+        if (tokens.length === 0) return;
+
+        this.starts.push(tokens[0]);
+        if(this.starts.length > 100) this.starts.shift(); 
+
+        this.vocab.add(tokens[0]);
+
+        for (let i = 0; i < tokens.length - 1; i++) {
+            const current = tokens[i];
+            const next = tokens[i + 1];
+            this.vocab.add(next);
+            
+            if (!this.bigrams.has(current)) this.bigrams.set(current, []);
+            const links = this.bigrams.get(current);
+            const existing = links.find(l => l.next === next);
+            
+            if (existing) {
+                // 上限10.0。シードや基礎構造は強固に定着させる
+                existing.life = Math.min(10.0, existing.life + (0.5 * weight)); 
+            } else {
+                links.push({ next: next, life: 1.0 * weight }); 
+            }
+            
+            if (/[A-Z_a-zA-Z\u4E00-\u9FFF\u30A0-\u30FF]/.test(next) && !this.recentLearned.includes(next)) {
+                this.recentLearned.unshift(next);
+                if (this.recentLearned.length > 20) this.recentLearned.pop();
+            }
+        }
+    }
+
+    // RCM: 記憶の代謝とクリーンアップ
+    decayMemory() {
+        for (let [current, links] of this.bigrams.entries()) {
+            for (let i = links.length - 1; i >= 0; i--) {
+                links[i].life -= 0.01; 
+                if (links[i].life <= 0) {
+                    links.splice(i, 1); 
+                }
+            }
+            if (links.length === 0) {
+                this.bigrams.delete(current);
+            }
+        }
+        
+        this.vocab.clear();
+        for (let [current, links] of this.bigrams.entries()) {
+            this.vocab.add(current);
+            links.forEach(l => this.vocab.add(l.next));
+        }
+
+        this.starts = this.starts.filter(w => this.vocab.has(w));
+    }
+
+    generate(maxLength) {
+        let startPool = this.starts.length > 0 ? this.starts : Array.from(this.vocab);
+        if (startPool.length === 0) return "NOP";
+        
+        let current = startPool[this.rng.intRange(0, startPool.length - 1)];
+        if (!current) return "NOP"; 
+        
+        let output = [current];
+
+        for (let i = 0; i < maxLength - 1; i++) {
+            const nextCandidates = this.bigrams.get(current);
+            
+            if (!nextCandidates || nextCandidates.length === 0) {
+                if (this.rng.next() < 0.3) break; 
+                const vocabArr = Array.from(this.vocab);
+                if (vocabArr.length === 0) break; 
+                current = vocabArr[this.rng.intRange(0, vocabArr.length - 1)];
+                if (!current) break; 
+            } else {
+                const totalLife = nextCandidates.reduce((sum, link) => sum + link.life, 0);
+                if (totalLife <= 0) break; 
+                
+                let r = this.rng.next() * totalLife;
+                let found = false;
+                for (let link of nextCandidates) {
+                    r -= link.life;
+                    if (r <= 0) {
+                        current = link.next;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) current = nextCandidates[nextCandidates.length - 1].next;
+            }
+            
+            output.push(current);
+            if (current === "。" || current === "！" || current === "？") break;
+        }
+
+        // 半角スペースで繋いで出力。形態素の切れ目をあえて見せるUI
+        return output.join(" ").trim();
+    }
+
+    getVocabSize() { return this.vocab.size; }
+    getLinkSize() { 
+        let count = 0;
+        this.bigrams.forEach(arr => count += arr.length);
+        return count;
+    }
+}
+
+// ==========================================
+// Agent & Cognitive Engine
+// ==========================================
+class LocalCognitiveEngine {
+    static async processTurn(agent, opponentText) {
+        try {
+            const phaseRad = (agent.getPhase() / 65535) * Math.PI * 2;
+            const tempoWave = (Math.sin(phaseRad) + 1.0) / 2.0; 
+            const baseDelay = 500 + tempoWave * 3500; 
+            
+            agent.currentTempo = tempoWave < 0.3 ? "Drive (Fast)" : tempoWave > 0.7 ? "Rest (Slow)" : "Normal";
+            await new Promise(resolve => setTimeout(resolve, baseDelay));
+
+            agent.ngram.decayMemory();
+
+            if (opponentText && opponentText !== "NOP" && opponentText !== "NO_SIGNAL" && opponentText !== "ERROR") {
+                // 相手の発言を学習し、語彙と文法（助詞の繋がり等）を吸収する
+                agent.ngram.train(opponentText, 1.0);
+            }
+
+            let targetLength = rng.intRange(4, 15);
+            let output = agent.ngram.generate(targetLength);
+            
+            const isStuck = chatHistory.length > 4 && chatHistory.slice(-2).every(m => m.text.length < 5);
+            
+            if (output === "NOP" || output === "" || isStuck || rng.next() < 0.15) {
+                const newConcept = await ExternalNetwork.searchNewConcept();
+                if (newConcept) {
+                    logSystem({ text: `[SEARCH] 外部データベースから知識を抽出...` }, 'system_important', 'text-blue-300');
+
+                    let generatedText = "";
+                    // 名詞をただ覚えるのではなく、自身の「基礎文法」に当てはめて文脈化する
+                    if (agent.id === 'A') {
+                        const templates = [
+                            `${newConcept} を 評価 する 。`,
+                            `${newConcept} の 状態 は TRUE で ある 。`,
+                            `もし ${newConcept} ならば 実行 する 。`,
+                            `概念 ${newConcept} を 定義 する 。`
+                        ];
+                        generatedText = templates[rng.intRange(0, templates.length - 1)];
+                    } else {
+                        const templates = [
+                            `${newConcept} が 空間 に 存在 する 。`,
+                            `${newConcept} の 座標 を 観測 する 。`,
+                            `${newConcept} へ 移動 する 。`,
+                            `領域 ${newConcept} を 展開 する 。`
+                        ];
+                        generatedText = templates[rng.intRange(0, templates.length - 1)];
+                    }
+                    
+                    // 発明した新しい構文を強固に学習する
+                    agent.ngram.train(generatedText, 2.0);
+                    
+                    logSystem({ text: `[獲得] 新概念の文脈化: "${newConcept}"` }, 'system_important', 'text-yellow-400 font-bold');
+                    output = generatedText;
+
+                } else {
+                    // APIエラー等の場合は、基本の思考に戻る
+                    output = agent.id === 'A' ? "論理 の 再計算 を 実行 する 。" : "領域 を 再スキャン する 。"; 
+                }
+            }
+
+            return output;
+
+        } catch (e) {
+            console.error("Cognitive Engine Error:", e);
+            logToTerminal(`[SYSTEM ERROR] Fail-Safe Activated for ${agent.name}: ${e.message}`);
+            return "ERROR";
+        }
+    }
+}
+
+class ADCAgent {
+    constructor(id, name, initialSentences, x, y, colorCode, uiPrefix, initialPhase = 0) {
+        this.id = id;
+        this.name = name;
+        this.x = x; this.y = y;
+        this.color = colorCode;
+        this.uiPrefix = uiPrefix;
+        this.isThinking = false; 
+        this.currentTempo = "Normal";
+        
+        this.baseVocab = [];
+        this.learnedVocab = [];
+        
+        this.ngram = new NGramModel(rng);
+        
+        // 基礎文法（シード）を非常に強く刷り込み、文法構造の骨格を作る
+        if (initialSentences && initialSentences.length > 0) {
+            initialSentences.forEach(s => {
+                this.ngram.train(s, 10.0); 
+            });
+        }
+
+        this.state = 0n;
+        this.setState(initialPhase, 0);
+        this.updateUI();
+    }
+
+    exportState() {
+        return {
+            learnedVocab: [...this.learnedVocab],
+            ngram: {
+                starts: [...this.ngram.starts],
+                vocab: Array.from(this.ngram.vocab),
+                bigrams: Array.from(this.ngram.bigrams.entries()),
+                recentLearned: [...this.ngram.recentLearned]
+            }
+        };
+    }
+
+    importState(data) {
+        if (!data) return;
+        if (data.learnedVocab) this.learnedVocab = data.learnedVocab;
+        if (data.ngram) {
+            this.ngram.starts = data.ngram.starts || [];
+            this.ngram.vocab = new Set(data.ngram.vocab || []);
+            this.ngram.bigrams = new Map(data.ngram.bigrams || []);
+            this.ngram.recentLearned = data.ngram.recentLearned || [];
+        }
+        this.updateUI();
+    }
+
+    setState(phase, intensity) {
+        this.state = (0n & 0xFn) << 48n |
+                     (0n & 0xFFFFn) << 32n |
+                     (BigInt(intensity) & 0xFFFFn) << 16n |
+                     (BigInt(phase) & 0xFFFFn);
+    }
+
+    getPhase() { return Number(this.state & 0xFFFFn); }
+
+    update() {
+        if (this.isThinking) return; 
+
+        let phase = this.getPhase();
+        const PHASE_STEP = 546; 
+
+        let nextPhase = phase + PHASE_STEP;
+        if (nextPhase > 65535) {
+            if (currentTurn === this.id) {
+                this.isThinking = true;
+                this.triggerInference(); 
+                nextPhase = 65535; 
+            } else {
+                nextPhase = 65535; 
+            }
+        }
+        phase = nextPhase;
+        
+        this.setState(phase, 0);
+    }
+
+    async triggerInference() {
+        this.updateUI(); 
+
+        let opponentText = null;
+        if (chatHistory.length > 0) {
+            const lastMsg = chatHistory[chatHistory.length - 1];
+            if (lastMsg.agent !== this.name) opponentText = lastMsg.text;
+        }
+
+        const utterance = await LocalCognitiveEngine.processTurn(this, opponentText);
+
+        emitImpulse(this, utterance);
+        chatHistory.push({agent: this.name, text: utterance});
+
+        this.setState(0, 0);
+        this.isThinking = false;
+        currentTurn = (this.id === 'A') ? 'B' : 'A';
+    }
+
+    updateUI() {
+        const hex = "0x" + this.state.toString(16).padStart(16, '0').toUpperCase();
+        document.getElementById(`state-${this.uiPrefix}-hex`).innerText = hex;
+        
+        const phase = this.getPhase();
+
+        document.getElementById(`phase-bar-${this.uiPrefix}`).style.width = `${(phase / 65535) * 100}%`;
+        
+        if (this.isThinking) {
+            document.getElementById(`intensity-${this.uiPrefix}`).innerHTML = `<span class="animate-pulse text-yellow-400">Processing...</span>`;
+        } else {
+            let color = "text-white";
+            if (this.currentTempo === "Drive (Fast)") color = "text-red-400";
+            if (this.currentTempo === "Rest (Slow)") color = "text-blue-400";
+            document.getElementById(`intensity-${this.uiPrefix}`).innerHTML = `<span class="${color}">${this.currentTempo}</span>`;
+        }
+
+        document.getElementById(`vocab-size-${this.uiPrefix}`).innerText = this.ngram.getVocabSize();
+        document.getElementById(`links-${this.uiPrefix}`).innerText = this.ngram.getLinkSize();
+        
+        const vocabEl = document.getElementById(`vocab-${this.uiPrefix}`);
+        vocabEl.innerHTML = this.ngram.recentLearned.map(w => {
+            // トークン単位でのUI表示（視覚的ノイズを減らすため記号は除外）
+            if (["。", "！", "？", "、"].includes(w)) return "";
+            if (w.includes('_')) return `<div class="text-yellow-300 font-bold drop-shadow-[0_0_2px_rgba(253,224,71,0.8)]">> ${w}</div>`;
+            return `<div>> ${w}</div>`;
+        }).join('');
+    }
+}
+
+const canvas = document.getElementById('fbm-canvas');
+const ctx = canvas.getContext('2d', { alpha: false });
+let impulses = [];
+let nodes = [];
+
+// 分かち書きされた基礎文法（シード）
+const seedA = [
+    "対象 を 評価 する 。",
+    "結果 は TRUE で ある 。",
+    "結果 は FALSE で ある 。",
+    "もし TRUE ならば 実行 する 。",
+    "条件 を 否定 する 。",
+    "規則 を 定義 する 。"
+];
+const seedB = [
+    "対象 が 空間 に 存在 する 。",
+    "座標 が 遠方 を 示す 。",
+    "座標 が 近傍 を 示す 。",
+    "目標 へ 移動 する 。",
+    "領域 を 展開 する 。",
+    "ベクトル を 観測 する 。"
+];
+
+const agentA = new ADCAgent('A', 'Agent-A', seedA, 0, 0, '#22d3ee', 'a', 0);
+const agentB = new ADCAgent('B', 'Agent-B', seedB, 0, 0, '#e879f9', 'b', 32768);
+
+// ==========================================
+// Data Handlers
+// ==========================================
+document.getElementById('btn-export-vocab').addEventListener('click', () => {
+    const data = { agentA: agentA.exportState(), agentB: agentB.exportState() };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `adc_vocab_state_${Date.now()}.json`; a.click();
+    URL.revokeObjectURL(url);
+    logSystem({ text: "[SYSTEM] 認知ネットワークをエクスポートしました。" }, 'system_important', 'text-blue-300');
+});
+
+document.getElementById('btn-import-vocab').addEventListener('click', () => document.getElementById('import-vocab-file').click());
+
+document.getElementById('import-vocab-file').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+        try {
+            const data = JSON.parse(event.target.result);
+            if (data.agentA) agentA.importState(data.agentA);
+            if (data.agentB) agentB.importState(data.agentB);
+            autoSave(); 
+        } catch (error) {}
+    };
+    reader.readAsText(file);
+    e.target.value = ''; 
+});
+
+function resizeCanvas() {
+    canvas.width = canvas.parentElement.clientWidth;
+    canvas.height = canvas.parentElement.clientHeight;
+    agentA.x = canvas.width * 0.2; agentA.y = canvas.height * 0.5;
+    agentB.x = canvas.width * 0.8; agentB.y = canvas.height * 0.5;
+}
+window.addEventListener('resize', resizeCanvas);
+
+const logPanel = document.getElementById('log-panel');
+
+function logSystem(msg, type = 'system', colorClass = 'text-white') {
+    const now = new Date();
+    const timeStrFull = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}.${now.getMilliseconds().toString().padStart(3, '0')}`;
+    const tickStr = `[TICK:${globalTick.toString().padStart(6, '0')}]`;
+    
+    let rawLogText = type === 'chat' ? `${timeStrFull} ${tickStr} Agent-${msg.agentId}: "${msg.text}"` : `${timeStrFull} ${tickStr} [SYS] ${msg.text || msg}`;
+    logToTerminal(rawLogText);
+
+    if (type === 'chat') {
+        const el = document.createElement('div');
+        el.className = 'w-full flex text-sm animate-fade-in-up my-2';
+        const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+
+        if (msg.agentId === 'A') {
+            el.innerHTML = `
+                <div class="flex items-start max-w-[85%]">
+                    <div class="flex-shrink-0 w-8 h-8 rounded-full bg-cyan-900 border-2 border-cyan-400 flex items-center justify-center text-cyan-200 font-bold shadow-md relative mr-2">
+                        <span class="z-10 text-xs">A</span><div class="absolute inset-0 bg-cyan-400 opacity-20 rounded-full"></div>
+                    </div>
+                    <div class="flex flex-col">
+                        <span class="text-[10px] text-[#2c2c2c] ml-1 mb-0.5 font-bold">Agent-A</span>
+                        <div class="flex items-end">
+                            <div class="relative bg-white text-[#2c2c2c] text-xs px-3 py-1.5 rounded-2xl bubble-left shadow-[0_2px_5px_rgba(0,0,0,0.1)] leading-snug break-words">${msg.text}</div>
+                            <span class="text-[9px] text-white/70 ml-2 mb-1 shrink-0">${timeStr}</span>
+                        </div>
+                    </div>
+                </div>`;
+            el.classList.add('justify-start');
+        } else {
+            el.innerHTML = `
+                <div class="flex items-start max-w-[85%]">
+                    <div class="flex flex-col items-end w-full">
+                        <span class="text-[10px] text-[#2c2c2c] mr-1 mb-0.5 font-bold">Agent-B</span>
+                        <div class="flex items-end justify-end w-full">
+                            <span class="text-[9px] text-white/70 mr-2 mb-1 shrink-0 text-right">既読<br>${timeStr}</span>
+                            <div class="relative bg-[#86efac] text-[#166534] text-xs px-3 py-1.5 rounded-2xl bubble-right shadow-[0_2px_5px_rgba(0,0,0,0.1)] leading-snug break-words">${msg.text}</div>
+                        </div>
+                    </div>
+                    <div class="flex-shrink-0 w-8 h-8 rounded-full bg-fuchsia-900 border-2 border-fuchsia-400 flex items-center justify-center text-fuchsia-200 font-bold shadow-md relative ml-2">
+                        <span class="z-10 text-xs">B</span><div class="absolute inset-0 bg-fuchsia-400 opacity-20 rounded-full"></div>
+                    </div>
+                </div>`;
+            el.classList.add('justify-end');
+        }
+        logPanel.appendChild(el);
+    } else if (type === 'system_important') {
+        const el = document.createElement('div');
+        el.className = 'w-full flex justify-center my-1 animate-fade-in-up';
+        el.innerHTML = `<div class="bg-black/40 text-white/90 text-[10px] rounded-full px-4 py-1.5 shadow-md backdrop-blur-sm border border-white/10 ${colorClass}">${msg.text || msg}</div>`;
+        logPanel.appendChild(el);
+    }
+    
+    if(logPanel.childElementCount > 40) logPanel.removeChild(logPanel.firstChild);
+    setTimeout(() => { logPanel.scrollTo({ top: logPanel.scrollHeight, behavior: 'smooth' }); }, 10);
+}
+
+let lastTime = 0, accumulator = 0;
+const TICK_MS = 1000 / 60; 
+
+function loop(timestamp) {
+    if (!lastTime) lastTime = timestamp;
+    let dt = timestamp - lastTime; lastTime = timestamp;
+    if (dt > 250) dt = 250; accumulator += dt;
+
+    while (accumulator >= TICK_MS) {
+        systemTick(); accumulator -= TICK_MS;
+    }
+    renderPDE(); requestAnimationFrame(loop);
+}
+
+function systemTick() {
+    globalTick++;
+    if (globalTick % 5 === 0) document.getElementById('global-tick').innerText = globalTick;
+    agentA.update(); agentB.update(); updateFBM();
+    agentA.updateUI(); agentB.updateUI();
+    
+    if (globalTick % 300 === 0) autoSave();
+}
+
+function emitImpulse(agent, word) {
+    impulses.push({
+        x: agent.x + rng.range(-20, 20), y: agent.y + rng.range(-20, 20),
+        radius: 0, maxRadius: rng.range(150, 300), speed: rng.range(1.5, 3.0),
+        text: word, agentId: agent.id, color: agent.color, active: true
+    });
+    logSystem({ agentId: agent.id, text: word }, 'chat');
+}
+
+function updateFBM() {
+    impulses.forEach(imp => {
+        if(imp.active) imp.radius += imp.speed;
+        if(imp.radius > imp.maxRadius) imp.active = false;
+    });
+
+    for (let i = 0; i < impulses.length; i++) {
+        for (let j = i + 1; j < impulses.length; j++) {
+            let imp1 = impulses[i], imp2 = impulses[j];
+            if (!imp1.active || !imp2.active || imp1.agentId === imp2.agentId) continue;
+
+            let dx = imp1.x - imp2.x, dy = imp1.y - imp2.y;
+            let distance = Math.sqrt(dx * dx + dy * dy);
+
+            if (Math.abs(distance - (imp1.radius + imp2.radius)) < 4.0) {
+                if (rng.next() < 0.3) {
+                    crystallizeKnowledge(imp1, imp2, imp1.x - dx/2, imp1.y - dy/2);
+                    imp1.active = false; imp2.active = false;
+                }
+            }
+        }
+    }
+    impulses = impulses.filter(i => i.active);
+    nodes.forEach(n => n.life -= 0.003); nodes = nodes.filter(n => n.life > 0);
+}
+
+function crystallizeKnowledge(imp1, imp2, cx, cy) {
+    const extract = (text) => (text.match(/[A-Z_a-zA-Z0-9\u4E00-\u9FFF\u30A0-\u30FF]+/g) || []).filter(m => m.length > 1);
+    let cA = extract(imp1.text), cB = extract(imp2.text);
+    if (cA.length === 0 || cB.length === 0) return;
+
+    let tA = cA[rng.intRange(0, cA.length - 1)], tB = cB[rng.intRange(0, cB.length - 1)];
+    if (tA === tB || tA.includes('_') || tB.includes('_')) return;
+
+    let newConcept = `${tA}_${tB}`;
+    
+    // 定型文なしでシンプルに新しい概念を学習させる
+    agentA.ngram.train(newConcept);
+    agentB.ngram.train(newConcept);
+    
+    nodes.push({ x: cx, y: cy, text: newConcept, life: 1.0 });
+    autoSave();
+}
+
+function renderPDE() {
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.3)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    impulses.forEach(imp => {
+        let alpha = 1.0 - (imp.radius / imp.maxRadius);
+        ctx.beginPath(); ctx.arc(imp.x, imp.y, imp.radius, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(${hexToRgb(imp.color)}, ${alpha * 0.6})`; ctx.stroke();
+        if (alpha > 0.2) {
+            ctx.fillStyle = `rgba(${hexToRgb(imp.color)}, ${alpha})`;
+            ctx.font = '10px Fira Code';
+            let shortText = imp.text.length > 20 ? imp.text.substring(0, 20) + "..." : imp.text;
+            ctx.fillText(shortText, imp.x, imp.y - imp.radius);
+        }
+    });
+
+    nodes.forEach(n => {
+        ctx.beginPath(); ctx.arc(n.x, n.y, 4 + (Math.sin(globalTick * 0.1) * 2), 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(250, 204, 21, ${n.life})`; ctx.fill();
+        ctx.fillStyle = `rgba(255, 255, 255, ${n.life})`;
+        ctx.font = 'bold 12px Noto Sans JP'; ctx.textAlign = 'center';
+        ctx.fillText(n.text, n.x, n.y - 12); ctx.textAlign = 'left';
+    });
+
+    drawAgentBase(agentA); drawAgentBase(agentB);
+}
+
+function drawAgentBase(agent) {
+    ctx.beginPath(); ctx.arc(agent.x, agent.y, 8, 0, Math.PI * 2); ctx.fillStyle = agent.color; ctx.fill();
+    ctx.beginPath(); ctx.arc(agent.x, agent.y, 14, -Math.PI/2, (-Math.PI/2) + (agent.getPhase() / 65535) * Math.PI * 2);
+    ctx.strokeStyle = agent.color; ctx.lineWidth = 2; ctx.stroke();
+}
+
+function hexToRgb(hex) {
+    var r = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return r ? `${parseInt(r[1], 16)}, ${parseInt(r[2], 16)}, ${parseInt(r[3], 16)}` : '255,255,255';
+}
+
+const style = document.createElement('style');
+style.textContent = `@keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } } .animate-fade-in-up { animation: fadeInUp 0.3s ease-out forwards; }`;
+document.head.appendChild(style);
+
+logToTerminal(`[SYSTEM INIT] Engine v2.9 booted. Syntactic Crossover Active. Seed: 88888`);
+autoLoad();
+
+resizeCanvas(); requestAnimationFrame(loop);
+</script>
+</body>
+</html>
