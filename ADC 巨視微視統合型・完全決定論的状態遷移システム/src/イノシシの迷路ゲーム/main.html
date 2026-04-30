@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>イノシシの迷路ゲーム</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { overscroll-behavior: none; touch-action: none; }
+        canvas { touch-action: none; -webkit-touch-callout: none; }
+    </style>
+</head>
+<body class="bg-neutral-900 text-neutral-100 font-sans select-none overflow-hidden">
+
+    <div class="w-full max-w-2xl mx-auto flex flex-col items-center justify-center min-h-screen px-3 py-4 md:py-8">
+        
+        <!-- ヘッダー（タイトル・説明） -->
+        <div class="mb-4 text-center w-full">
+            <h1 class="text-xl md:text-3xl font-bold mb-2 text-neutral-100 drop-shadow-md">イノシシの迷路ゲーム</h1>
+            <p class="text-xs md:text-sm text-neutral-400 leading-relaxed">
+                タップして🍎を配置し、ゴール(🏁)へ導こう。<br class="hidden md:block">
+                <strong class="text-yellow-400">突進中に画面長押しでスロー、離すとストップ</strong>します。
+            </p>
+        </div>
+
+        <!-- PDE: Perceptual Dynamics Engine (UI / 認知層・盤面外) -->
+        <div class="w-full flex justify-between items-center mb-3 px-1">
+            <div class="bg-neutral-800 px-4 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 shadow-lg border border-neutral-700">
+                <span class="text-neutral-400">ステージ</span> 
+                <span id="ui-stage" class="text-blue-400 text-lg md:text-xl leading-none">1</span>
+            </div>
+            
+            <div id="ui-slow-indicator" class="bg-neutral-800 px-4 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 shadow-lg border border-neutral-700 transition-colors duration-300">
+                <span class="text-neutral-300">長押しでスロー</span> 
+                <span class="text-yellow-400 text-lg leading-none">⏱️</span>
+            </div>
+        </div>
+
+        <!-- ゲーム盤面コンテナ -->
+        <div class="relative bg-neutral-800 p-2 md:p-3 rounded-2xl shadow-[0_10px_40px_rgba(0,0,0,0.5)] w-full flex items-center justify-center overflow-hidden border border-neutral-700/50">
+            <!-- キャンバス (スマホ最適化のため max-h 指定で縦はみ出しを防止し object-contain で比率維持) -->
+            <canvas id="gameCanvas" class="bg-neutral-700 rounded-xl shadow-inner w-full h-auto max-h-[60vh] object-contain"></canvas>
+            
+            <!-- CVM: Lifecycle Overlays -->
+            <div id="ui-overlay" class="absolute inset-0 flex items-center justify-center bg-black/80 rounded-2xl hidden z-10 backdrop-blur-sm">
+                <div class="text-center transform transition-transform scale-100">
+                    <h2 id="ui-overlay-title" class="text-3xl md:text-5xl font-black mb-8 drop-shadow-[0_0_15px_rgba(250,204,21,0.5)]">クリア！</h2>
+                    <button id="ui-retry-btn" class="px-10 py-4 bg-blue-600 hover:bg-blue-500 active:scale-95 rounded-full font-bold text-lg md:text-xl transition-all pointer-events-auto shadow-[0_0_20px_rgba(37,99,235,0.4)]">もう一度</button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+<script>
+/**
+ * Axiom Dynamics Core (ADC) System
+ * 巨視微視統合型・完全決定論的状態遷移システムに基づくゲームロジック
+ */
+
+const CELL_SIZE = 40;
+const MAX_STAGES = 20;
+
+// 自動生成マップのためのユーティリティ関数
+function generateMap(cols, rows) {
+    const map = Array.from({ length: rows }, () => Array(cols).fill(1));
+    
+    let currentC = 1;
+    let currentR = 1;
+    map[currentR][currentC] = 0;
+    
+    const stack = [[currentR, currentC]];
+    const directions = [[0, 2], [0, -2], [2, 0], [-2, 0]];
+    
+    while (stack.length > 0) {
+        const [r, c] = stack[stack.length - 1];
+        const shuffledDirs = directions.sort(() => Math.random() - 0.5);
+        let moved = false;
+        
+        for (const [dr, dc] of shuffledDirs) {
+            const nextR = r + dr;
+            const nextC = c + dc;
+            
+            if (nextR > 0 && nextR < rows - 1 && nextC > 0 && nextC < cols - 1 && map[nextR][nextC] === 1) {
+                map[r + dr / 2][c + dc / 2] = 0; 
+                map[nextR][nextC] = 0;
+                stack.push([nextR, nextC]);
+                moved = true;
+                break;
+            }
+        }
+        
+        if (!moved) {
+            stack.pop();
+        }
+    }
+    
+    map[1][1] = 3; 
+    
+    let goalPlaced = false;
+    for (let r = rows - 2; r > 0 && !goalPlaced; r--) {
+        for (let c = cols - 2; c > 0 && !goalPlaced; c--) {
+            if (map[r][c] === 0) {
+                map[r][c] = 2;
+                goalPlaced = true;
+            }
+        }
+    }
+
+    for(let i = 0; i < (cols * rows) / 10; i++){
+        let randR = Math.floor(Math.random() * (rows - 2)) + 1;
+        let randC = Math.floor(Math.random() * (cols - 2)) + 1;
+        if(map[randR][randC] === 1 && (map[randR-1][randC] === 0 || map[randR+1][randC] === 0 || map[randR][randC-1] === 0 || map[randR][randC+1] === 0)){
+            map[randR][randC] = 0;
+        }
+    }
+    
+    return map;
+}
+
+const STAGES = [
+    { map: [[1,1,1,1,1,1,1],[1,3,0,0,0,2,1],[1,1,1,1,1,1,1]] },
+    { map: [[1,1,1,1,1,1],[1,2,0,0,1,1],[1,1,1,0,1,1],[1,3,0,0,1,1],[1,1,1,1,1,1]] },
+    { map: [[1,1,1,1,1,1,1,1],[1,0,1,2,0,0,0,1],[1,0,1,1,1,1,0,1],[1,0,0,0,0,1,0,1],[1,1,1,1,0,1,0,1],[1,3,0,0,0,0,0,1],[1,1,1,1,1,1,1,1]] },
+    { map: [[1,1,1,1,1,1,1,1,1],[1,2,0,0,0,0,0,0,1],[1,1,1,1,1,1,1,0,1],[1,0,0,0,0,0,1,0,1],[1,0,1,1,1,0,1,0,1],[1,0,1,3,1,0,0,0,1],[1,0,1,0,1,1,1,1,1],[1,0,0,0,0,0,0,0,1],[1,1,1,1,1,1,1,1,1]] },
+    { map: [[1,1,1,1,1,1,1,1,1,1],[1,0,0,0,0,0,0,0,0,1],[1,0,1,1,0,1,1,1,0,1],[1,0,1,2,0,1,0,0,0,1],[1,0,1,1,1,1,0,1,1,1],[1,0,0,0,0,0,0,0,3,1],[1,1,1,0,1,1,1,1,1,1],[1,0,0,0,0,0,0,0,0,1],[1,1,1,1,1,1,1,1,1,1]] }
+];
+
+const ADC = {
+    state: {
+        status: 'Maturity',
+        currentStageIndex: 0,
+        applePlaced: null,
+        slowModeActive: false,
+    },
+    boar: {
+        x: 0, y: 0,
+        phase: 'REST', 
+        vel: 0,
+        baseVel: 380,
+        dir: {x: 0, y: 0},
+        target: {x: 0, y: 0},
+        walkTimer: 0,
+        confusedTimer: 0,
+    },
+    cameraShake: 0,
+    particles: []
+};
+
+let MAP = [];
+let MAP_ROWS = 0;
+let MAP_COLS = 0;
+
+const uiStage = document.getElementById('ui-stage');
+const uiOverlay = document.getElementById('ui-overlay');
+const uiOverlayTitle = document.getElementById('ui-overlay-title');
+const uiRetryBtn = document.getElementById('ui-retry-btn');
+const uiSlowIndicator = document.getElementById('ui-slow-indicator');
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+let retryCallback = null;
+
+function loadStage(index) {
+    if (index < STAGES.length) {
+        MAP = JSON.parse(JSON.stringify(STAGES[index].map));
+    } else {
+        const extraSize = (index - STAGES.length + 1) * 2;
+        let cols = 11 + extraSize;
+        let rows = 11 + extraSize;
+        
+        const maxCols = 31; // スマホでの描画限界の目安
+        const maxRows = 31;
+        cols = Math.min(cols, maxCols);
+        rows = Math.min(rows, maxRows);
+        
+        if(cols % 2 === 0) cols--;
+        if(rows % 2 === 0) rows--;
+
+        MAP = generateMap(cols, rows);
+    }
+    
+    MAP_ROWS = MAP.length;
+    MAP_COLS = MAP[0].length;
+    
+    ADC.state.status = 'Maturity';
+    ADC.state.applePlaced = null;
+    ADC.state.slowModeActive = false;
+    
+    for (let r = 0; r < MAP_ROWS; r++) {
+        for (let c = 0; c < MAP_COLS; c++) {
+            if (MAP[r][c] === 3) {
+                ADC.boar.x = c * CELL_SIZE + CELL_SIZE / 2;
+                ADC.boar.y = r * CELL_SIZE + CELL_SIZE / 2;
+                MAP[r][c] = 0; 
+            }
+        }
+    }
+    
+    ADC.boar.phase = 'REST';
+    ADC.boar.vel = 0;
+    ADC.boar.dir = {x: 0, y: 0};
+    ADC.boar.walkTimer = 0;
+    ADC.boar.confusedTimer = 0;
+    
+    ADC.cameraShake = 0;
+    ADC.particles = [];
+    
+    uiOverlay.classList.add('hidden');
+    updateUI();
+}
+
+function canSeeApple(bCol, bRow, appleCol, appleRow) {
+    if (bCol === appleCol && bRow === appleRow) return false;
+    
+    if (bCol === appleCol) {
+        const step = appleRow > bRow ? 1 : -1;
+        for (let r = bRow + step; r !== appleRow; r += step) {
+            if (MAP[r][bCol] === 1) return false;
+        }
+        return { x: 0, y: step }; 
+    }
+    if (bRow === appleRow) {
+        const step = appleCol > bCol ? 1 : -1;
+        for (let c = bCol + step; c !== appleCol; c += step) {
+            if (MAP[bRow][c] === 1) return false;
+        }
+        return { x: step, y: 0 }; 
+    }
+    return false;
+}
+
+function calculateTrajectory(startX, startY, dirX, dirY) {
+    let currCol = Math.floor(startX / CELL_SIZE);
+    let currRow = Math.floor(startY / CELL_SIZE);
+    
+    while(true) {
+        let nextCol = currCol + dirX;
+        let nextRow = currRow + dirY;
+        
+        if (nextRow < 0 || nextRow >= MAP_ROWS || nextCol < 0 || nextCol >= MAP_COLS || MAP[nextRow][nextCol] === 1) {
+            break;
+        }
+        currCol = nextCol;
+        currRow = nextRow;
+    }
+    
+    return {
+        x: currCol * CELL_SIZE + CELL_SIZE / 2,
+        y: currRow * CELL_SIZE + CELL_SIZE / 2
+    };
+}
+
+function createDust(x, y) {
+    ADC.particles.push({
+        type: 'dust',
+        x: x + (Math.random() - 0.5) * 16,
+        y: y + (Math.random() - 0.5) * 16,
+        vx: (Math.random() - 0.5) * 15,
+        vy: (Math.random() - 0.5) * 15,
+        life: 1.0,
+        size: Math.random() * 6 + 4
+    });
+}
+
+function createImpact(x, y, dir) {
+    for(let i=0; i<15; i++) {
+        ADC.particles.push({
+            type: 'impact',
+            x: x, y: y,
+            vx: -dir.x * (Math.random() * 200) + (Math.random() - 0.5) * 150,
+            vy: -dir.y * (Math.random() * 200) + (Math.random() - 0.5) * 150,
+            life: 1.0,
+            size: Math.random() * 4 + 2
+        });
+    }
+}
+
+function createError(x, y) {
+    for(let i=0; i<3; i++) {
+        ADC.particles.push({
+            type: 'error',
+            x: x + (Math.random() - 0.5) * 10,
+            y: y + (Math.random() - 0.5) * 10,
+            vx: (Math.random() - 0.5) * 30,
+            vy: (Math.random() - 0.5) * 30,
+            life: 1.0,
+            size: 6
+        });
+    }
+}
+
+function stopBoarAndConfuse() {
+    const boarCol = Math.floor(ADC.boar.x / CELL_SIZE);
+    const boarRow = Math.floor(ADC.boar.y / CELL_SIZE);
+    ADC.boar.x = boarCol * CELL_SIZE + CELL_SIZE / 2;
+    ADC.boar.y = boarRow * CELL_SIZE + CELL_SIZE / 2;
+
+    ADC.boar.phase = 'CONFUSED';
+    ADC.boar.confusedTimer = 1.5; 
+}
+
+function update(dt) {
+    if (ADC.state.status !== 'Maturity') return;
+
+    let currentDt = dt;
+
+    if (ADC.state.slowModeActive) {
+        currentDt = dt * 0.15; 
+    }
+
+    if (ADC.boar.phase === 'CONFUSED') {
+        ADC.boar.confusedTimer -= dt;
+        if (ADC.boar.confusedTimer <= 0) {
+            ADC.boar.phase = 'REST';
+        }
+    } else if (ADC.boar.phase === 'DRIVE') {
+        ADC.boar.walkTimer += currentDt;
+        
+        const distToTarget = Math.hypot(ADC.boar.target.x - ADC.boar.x, ADC.boar.target.y - ADC.boar.y);
+        const moveDist = ADC.boar.vel * currentDt;
+        
+        let reached = false;
+        if (ADC.boar.dir.x > 0 && ADC.boar.x + moveDist >= ADC.boar.target.x) reached = true;
+        if (ADC.boar.dir.x < 0 && ADC.boar.x - moveDist <= ADC.boar.target.x) reached = true;
+        if (ADC.boar.dir.y > 0 && ADC.boar.y + moveDist >= ADC.boar.target.y) reached = true;
+        if (ADC.boar.dir.y < 0 && ADC.boar.y - moveDist <= ADC.boar.target.y) reached = true;
+
+        if (reached) {
+            ADC.boar.x = ADC.boar.target.x;
+            ADC.boar.y = ADC.boar.target.y;
+            ADC.boar.phase = 'REST';
+            
+            ADC.cameraShake = 18;
+            createImpact(ADC.boar.x + ADC.boar.dir.x * (CELL_SIZE/2), ADC.boar.y + ADC.boar.dir.y * (CELL_SIZE/2), ADC.boar.dir);
+            
+            checkGameState();
+            
+        } else {
+            ADC.boar.x += ADC.boar.dir.x * moveDist;
+            ADC.boar.y += ADC.boar.dir.y * moveDist;
+            
+            if (Math.random() < 0.6) createDust(ADC.boar.x, ADC.boar.y);
+        }
+        
+        if (ADC.state.applePlaced) {
+            const aX = ADC.state.applePlaced.col * CELL_SIZE + CELL_SIZE / 2;
+            const aY = ADC.state.applePlaced.row * CELL_SIZE + CELL_SIZE / 2;
+            if (Math.hypot(ADC.boar.x - aX, ADC.boar.y - aY) < CELL_SIZE / 2) {
+                ADC.state.applePlaced = null; 
+            }
+        }
+    }
+
+    ADC.particles.forEach(p => {
+        p.x += p.vx * currentDt;
+        p.y += p.vy * currentDt;
+        p.life -= currentDt * (p.type === 'error' ? 2.0 : 1.5);
+    });
+    ADC.particles = ADC.particles.filter(p => p.life > 0);
+}
+
+function checkGameState() {
+    const bCol = Math.floor(ADC.boar.x / CELL_SIZE);
+    const bRow = Math.floor(ADC.boar.y / CELL_SIZE);
+    
+    if (MAP[bRow] && MAP[bRow][bCol] === 2) {
+        ADC.state.status = 'Death';
+        ADC.state.slowModeActive = false; 
+        updateUI();
+
+        if (ADC.state.currentStageIndex < MAX_STAGES - 1) {
+            showResult("ステージクリア！", "text-yellow-400", "次のステージへ", () => {
+                ADC.state.currentStageIndex++;
+                loadStage(ADC.state.currentStageIndex);
+            });
+        } else {
+            showResult("全ステージクリア！🎉", "text-yellow-400", "最初から遊ぶ", () => {
+                ADC.state.currentStageIndex = 0;
+                loadStage(ADC.state.currentStageIndex);
+            });
+        }
+    }
+}
+
+function updateUI() {
+    uiStage.innerText = ADC.state.currentStageIndex + 1;
+
+    if (ADC.state.slowModeActive) {
+        uiSlowIndicator.classList.add('bg-blue-600/90', 'border-blue-400/50');
+        uiSlowIndicator.classList.remove('bg-neutral-800', 'border-neutral-700');
+    } else {
+        uiSlowIndicator.classList.add('bg-neutral-800', 'border-neutral-700');
+        uiSlowIndicator.classList.remove('bg-blue-600/90', 'border-blue-400/50');
+    }
+}
+
+function showResult(titleText, titleClass, btnText, callback) {
+    uiOverlay.classList.remove('hidden');
+    uiOverlayTitle.innerText = titleText;
+    uiOverlayTitle.className = `text-3xl md:text-5xl font-black mb-8 drop-shadow-[0_0_15px_rgba(250,204,21,0.5)] ${titleClass}`;
+    uiRetryBtn.innerText = btnText;
+    retryCallback = callback;
+}
+
+uiRetryBtn.addEventListener('click', () => {
+    if (retryCallback) retryCallback();
+});
+
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    const mapPixelWidth = MAP_COLS * CELL_SIZE;
+    const mapPixelHeight = MAP_ROWS * CELL_SIZE;
+    
+    if(canvas.width !== mapPixelWidth || canvas.height !== mapPixelHeight) {
+        canvas.width = mapPixelWidth;
+        canvas.height = mapPixelHeight;
+    }
+
+    ctx.save();
+    
+    if (ADC.cameraShake > 0) {
+        ctx.translate((Math.random() - 0.5) * ADC.cameraShake, (Math.random() - 0.5) * ADC.cameraShake);
+        ADC.cameraShake *= 0.85; 
+        if (ADC.cameraShake < 0.5) ADC.cameraShake = 0;
+    }
+    
+    ctx.fillStyle = '#404040';
+    ctx.fillRect(0, 0, mapPixelWidth, mapPixelHeight);
+    
+    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+    ctx.shadowBlur = 6;
+    ctx.shadowOffsetY = 4;
+    
+    for (let r = 0; r < MAP_ROWS; r++) {
+        for (let c = 0; c < MAP_COLS; c++) {
+            if (MAP[r][c] === 1) {
+                ctx.fillStyle = '#525252';
+                ctx.beginPath();
+                ctx.roundRect(c * CELL_SIZE + 1, r * CELL_SIZE + 1, CELL_SIZE - 2, CELL_SIZE - 2, 8);
+                ctx.fill();
+            } else if (MAP[r][c] === 2) {
+                ctx.fillStyle = '#3f3f46';
+                ctx.fillRect(c * CELL_SIZE + 2, r * CELL_SIZE + 2, CELL_SIZE - 4, CELL_SIZE - 4);
+                ctx.font = '24px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('🏁', c * CELL_SIZE + CELL_SIZE / 2, r * CELL_SIZE + CELL_SIZE / 2 + 2);
+            }
+        }
+    }
+    
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
+
+    if (ADC.state.applePlaced) {
+        ctx.font = '24px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const floatY = Math.sin(performance.now() / 150) * 3;
+        ctx.fillText('🍎', ADC.state.applePlaced.col * CELL_SIZE + CELL_SIZE / 2, ADC.state.applePlaced.row * CELL_SIZE + CELL_SIZE / 2 + floatY);
+    }
+    
+    ADC.particles.forEach(p => {
+        ctx.globalAlpha = Math.max(0, p.life);
+        if (p.type === 'dust') {
+            ctx.fillStyle = 'rgba(212, 212, 212, 0.4)';
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size * (2 - p.life), 0, Math.PI * 2);
+            ctx.fill();
+        } else if (p.type === 'impact') {
+            ctx.fillStyle = 'rgba(251, 146, 60, 0.9)';
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+            ctx.fill();
+        } else if (p.type === 'error') {
+            ctx.strokeStyle = 'rgba(248, 113, 113, 0.9)';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(p.x - p.size, p.y - p.size);
+            ctx.lineTo(p.x + p.size, p.y + p.size);
+            ctx.moveTo(p.x + p.size, p.y - p.size);
+            ctx.lineTo(p.x - p.size, p.y + p.size);
+            ctx.stroke();
+        }
+    });
+    ctx.globalAlpha = 1.0;
+    
+    if (ADC.state.slowModeActive) {
+        ctx.fillStyle = 'rgba(59, 130, 246, 0.15)'; 
+        ctx.fillRect(0, 0, mapPixelWidth, mapPixelHeight);
+    }
+    
+    if (isNaN(ADC.boar.x) || isNaN(ADC.boar.y)) {
+        ADC.boar.x = CELL_SIZE * 1.5; ADC.boar.y = CELL_SIZE * 1.5; 
+        ADC.boar.phase = 'REST';
+    }
+
+    let angle = 0;
+    let scaleX = -1; 
+    let walkBounce = 0;
+    
+    if (ADC.boar.dir.x > 0) scaleX = -1;
+    else if (ADC.boar.dir.x < 0) scaleX = 1;
+    else if (ADC.boar.dir.y > 0) { angle = -Math.PI / 2; scaleX = -1; }
+    else if (ADC.boar.dir.y < 0) { angle = Math.PI / 2; scaleX = -1; }
+    
+    if (ADC.boar.phase === 'DRIVE') {
+        let timeScale = ADC.state.slowModeActive ? 0.15 : 1;
+        walkBounce = Math.sin(ADC.boar.walkTimer * 40 * timeScale) * 4;
+        angle += Math.sin(ADC.boar.walkTimer * 30 * timeScale) * 0.1;
+    }
+    
+    ctx.save();
+    ctx.translate(ADC.boar.x, ADC.boar.y + walkBounce);
+    ctx.rotate(angle);
+    ctx.scale(scaleX, 1);
+    ctx.font = '30px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('🐗', 0, 2);
+    
+    if (ADC.boar.phase === 'CONFUSED') {
+        ctx.font = '24px sans-serif';
+        const floatY = Math.sin(performance.now() / 100) * 2;
+        ctx.fillText('❓', 0, -25 + floatY);
+    }
+    
+    ctx.restore();
+    ctx.restore();
+}
+
+// イベントリスナー（スマホ等でのスクロール・ズーム防止を含む）
+canvas.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    if (ADC.state.status !== 'Maturity') return;
+    
+    if (ADC.boar.phase === 'DRIVE') {
+        ADC.state.slowModeActive = true;
+        updateUI();
+        return;
+    }
+
+    if (ADC.boar.phase !== 'REST') return;
+    if (ADC.state.applePlaced) return;
+    
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    
+    const px = (e.clientX - rect.left) * scaleX;
+    const py = (e.clientY - rect.top) * scaleY;
+    
+    const col = Math.floor(px / CELL_SIZE);
+    const row = Math.floor(py / CELL_SIZE);
+    
+    const boarCol = Math.floor(ADC.boar.x / CELL_SIZE);
+    const boarRow = Math.floor(ADC.boar.y / CELL_SIZE);
+
+    if (col >= 0 && col < MAP_COLS && row >= 0 && row < MAP_ROWS) {
+        if (MAP[row][col] === 0 || MAP[row][col] === 2) {
+            
+            const dir = canSeeApple(boarCol, boarRow, col, row);
+            if (dir) {
+                ADC.boar.x = boarCol * CELL_SIZE + CELL_SIZE / 2;
+                ADC.boar.y = boarRow * CELL_SIZE + CELL_SIZE / 2;
+
+                ADC.state.applePlaced = {col, row};
+                updateUI();
+                
+                ADC.boar.dir = dir;
+                ADC.boar.phase = 'DRIVE';
+                ADC.boar.vel = ADC.boar.baseVel;
+                ADC.boar.target = calculateTrajectory(ADC.boar.x, ADC.boar.y, dir.x, dir.y);
+            } else {
+                createError(col * CELL_SIZE + CELL_SIZE/2, row * CELL_SIZE + CELL_SIZE/2);
+                ADC.cameraShake = 5;
+            }
+        }
+    }
+}, { passive: false });
+
+window.addEventListener('pointerup', () => {
+    if (ADC.state.status !== 'Maturity') return;
+
+    if (ADC.state.slowModeActive) {
+        ADC.state.slowModeActive = false;
+        ADC.state.applePlaced = null;
+        if (ADC.boar.phase === 'DRIVE') {
+            stopBoarAndConfuse();
+        }
+        updateUI();
+    }
+});
+
+window.addEventListener('pointercancel', () => {
+    if (ADC.state.slowModeActive) {
+        ADC.state.slowModeActive = false;
+        ADC.state.applePlaced = null;
+        if (ADC.boar.phase === 'DRIVE') stopBoarAndConfuse();
+        updateUI();
+    }
+});
+
+let lastTime = performance.now();
+function gameLoop(time) {
+    const dt = Math.min((time - lastTime) / 1000, 0.05);
+    lastTime = time;
+    
+    update(dt);
+    draw();
+    
+    requestAnimationFrame(gameLoop);
+}
+
+loadStage(0);
+requestAnimationFrame(gameLoop);
+
+</script>
+</body>
+</html>
