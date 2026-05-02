@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ZMF/UCD-F Flight Prototype</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #050510;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #fff;
+            touch-action: none; /* スマホでのスクロール防止 */
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .panel {
+            background: rgba(10, 20, 40, 0.8);
+            border: 1px solid #00aaff;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 4px 15px rgba(0, 170, 255, 0.2);
+            backdrop-filter: blur(4px);
+            pointer-events: auto;
+            max-width: 300px;
+        }
+        .title {
+            font-size: 14px;
+            color: #00aaff;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin: 0 0 10px 0;
+            border-bottom: 1px solid rgba(0, 170, 255, 0.3);
+            padding-bottom: 5px;
+        }
+        .mode-text {
+            font-size: 24px;
+            font-weight: bold;
+            margin: 5px 0;
+            color: #fff;
+            text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+        }
+        .desc {
+            font-size: 12px;
+            color: #aaa;
+            margin: 0;
+            line-height: 1.4;
+        }
+        .controls {
+            align-self: flex-end;
+            background: rgba(0, 0, 0, 0.6);
+            border: 1px solid #555;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 12px;
+            color: #ccc;
+        }
+        .key {
+            display: inline-block;
+            background: #eee;
+            color: #000;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: bold;
+            margin: 0 2px;
+        }
+        /* スピードライン用キャンバス */
+        #fx-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            mix-blend-mode: screen;
+        }
+        
+        /* スマホ用オンスクリーンボタン */
+        #mobile-controls {
+            display: none;
+            position: absolute;
+            bottom: 20px;
+            left: 0;
+            width: 100%;
+            justify-content: space-between;
+            padding: 0 20px;
+            box-sizing: border-box;
+            pointer-events: none;
+        }
+        @media (max-width: 768px) {
+            .controls { display: none; }
+            #mobile-controls { display: flex; }
+        }
+        .m-btn {
+            background: rgba(0, 170, 255, 0.2);
+            border: 2px solid rgba(0, 170, 255, 0.5);
+            color: #fff;
+            width: 60px;
+            height: 60px;
+            border-radius: 30px;
+            font-size: 12px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: auto;
+            user-select: none;
+        }
+        .m-btn:active { background: rgba(0, 170, 255, 0.6); }
+    </style>
+</head>
+<body>
+
+<canvas id="game-canvas"></canvas>
+<canvas id="fx-canvas"></canvas>
+
+<div id="ui-layer">
+    <div class="panel">
+        <h1 class="title">System: ZMF/ABC Dynamics</h1>
+        <div class="desc">現在の機体モード</div>
+        <div id="mode-display" class="mode-text">標準 (Balance)</div>
+        <p id="mode-desc" class="desc">操作性と慣性のバランスが取れた標準状態。</p>
+        
+        <div style="margin-top: 15px; font-size: 10px; color: #666; border-top: 1px dashed #333; padding-top: 5px;">
+            Mass: <span id="debug-mass">1.0</span> | Drag: <span id="debug-drag">0.1</span>
+        </div>
+    </div>
+
+    <div class="controls">
+        <div><span class="key">W</span><span class="key">A</span><span class="key">S</span><span class="key">D</span> または 矢印キー : 移動</div>
+        <div style="margin-top: 5px;"><span class="key">SPACE</span> : ショット</div>
+        <div style="margin-top: 5px;"><span class="key">SHIFT</span> : モード切替 (A/B/C)</div>
+    </div>
+</div>
+
+<div id="mobile-controls">
+    <div style="width: 120px; height: 120px; border-radius: 60px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); position: relative; pointer-events: auto;" id="virtual-stick">
+        <div style="width: 40px; height: 40px; border-radius: 20px; background: rgba(0,170,255,0.5); position: absolute; top: 40px; left: 40px;" id="stick-knob"></div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 10px;">
+        <div class="m-btn" id="btn-mode">MODE</div>
+        <div class="m-btn" id="btn-fire">FIRE</div>
+    </div>
+</div>
+
+<script>
+/**
+ * UCD-F: Zero-Allocation (固定長プール) の概念実装
+ * ガベージコレクションを避けるため、オブジェクトを再利用する
+ */
+class ObjectPool {
+    constructor(createFn, size) {
+        this.pool = Array.from({ length: size }, createFn);
+    }
+    get() {
+        const item = this.pool.find(i => !i.active);
+        if (item) item.active = true;
+        return item;
+    }
+    forEachActive(callback) {
+        for (let i = 0; i < this.pool.length; i++) {
+            if (this.pool[i].active) callback(this.pool[i]);
+        }
+    }
+}
+
+// ゲームのメインクラス
+class Game {
+    constructor() {
+        this.canvas = document.getElementById('game-canvas');
+        this.ctx = this.canvas.getContext('2d');
+        this.fxCanvas = document.getElementById('fx-canvas');
+        this.fxCtx = this.fxCanvas.getContext('2d');
+        
+        this.resize();
+        window.addEventListener('resize', () => this.resize());
+
+        this.input = { x: 0, y: 0, fire: false, modeSwitch: false };
+        this.setupInputs();
+
+        // 質量変動型ABCモデルの定義
+        this.modes = [
+            { id: 'A', name: '軽量 (Active)', desc: '慣性が残らず、機敏な方向転換が可能。', mass: 0.4, drag: 0.15, force: 1500, color: '#ff3366' },
+            { id: 'B', name: '標準 (Balance)', desc: '操作性と慣性のバランスが取れた標準状態。', mass: 1.0, drag: 0.05, force: 1200, color: '#00aaff' },
+            { id: 'C', name: '重装 (Cooling)', desc: '質量が大きく、どっしりとした慣性が残る。', mass: 2.5, drag: 0.015, force: 900, color: '#33ffaa' }
+        ];
+        this.currentModeIndex = 1; // Default to B
+
+        this.player = new Player(this);
+        
+        // オブジェクトプール（弾、星、パーティクル）
+        this.bullets = new ObjectPool(() => ({ active: false, x: 0, y: 0, vx: 0, vy: 0 }), 100);
+        this.stars = new ObjectPool(() => ({ active: false, x: 0, y: 0, speed: 0, size: 0, depth: 0 }), 200);
+        this.fxLines = new ObjectPool(() => ({ active: false, angle: 0, life: 0, maxLife: 0, speed: 0 }), 50);
+
+        this.initStars();
+
+        this.lastTime = performance.now();
+        this.updateUI();
+        
+        // ZMF: 視覚ノイズ用パラメータ
+        this.jerkIntensity = 0;
+
+        requestAnimationFrame(this.loop.bind(this));
+    }
+
+    resize() {
+        this.canvas.width = window.innerWidth;
+        this.canvas.height = window.innerHeight;
+        this.fxCanvas.width = window.innerWidth;
+        this.fxCanvas.height = window.innerHeight;
+    }
+
+    initStars() {
+        for(let i=0; i<200; i++) {
+            const star = this.stars.get();
+            if (star) {
+                star.x = Math.random() * this.canvas.width;
+                star.y = Math.random() * this.canvas.height;
+                star.depth = Math.random(); // 0.0 to 1.0
+                star.speed = (star.depth * 5) + 1;
+                star.size = star.depth * 2 + 0.5;
+            }
+        }
+    }
+
+    setupInputs() {
+        const keys = { KeyW: false, KeyA: false, KeyS: false, KeyD: false, ArrowUp: false, ArrowLeft: false, ArrowDown: false, ArrowRight: false };
+        
+        const updateAxis = () => {
+            this.input.y = (keys.KeyS || keys.ArrowDown ? 1 : 0) - (keys.KeyW || keys.ArrowUp ? 1 : 0);
+            this.input.x = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
+            // 正規化
+            const len = Math.sqrt(this.input.x ** 2 + this.input.y ** 2);
+            if (len > 0) {
+                this.input.x /= len;
+                this.input.y /= len;
+            }
+        };
+
+        window.addEventListener('keydown', (e) => {
+            if (keys.hasOwnProperty(e.code)) keys[e.code] = true;
+            if (e.code === 'Space') this.input.fire = true;
+            if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+                if (!this.input.modeSwitch) {
+                    this.switchMode();
+                    this.input.modeSwitch = true;
+                }
+            }
+            updateAxis();
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if (keys.hasOwnProperty(e.code)) keys[e.code] = false;
+            if (e.code === 'Space') this.input.fire = false;
+            if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') this.input.modeSwitch = false;
+            updateAxis();
+        });
+
+        // スマホ仮想ジョイスティック簡易実装
+        const stick = document.getElementById('virtual-stick');
+        const knob = document.getElementById('stick-knob');
+        let stickActive = false;
+        let stickCenter = { x: 0, y: 0 };
+
+        stick.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            stickActive = true;
+            const rect = stick.getBoundingClientRect();
+            stickCenter = { x: rect.left + 60, y: rect.top + 60 };
+            updateStick(e.touches[0]);
+        });
+        stick.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (stickActive) updateStick(e.touches[0]);
+        });
+        stick.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            stickActive = false;
+            knob.style.transform = `translate(0px, 0px)`;
+            this.input.x = 0; this.input.y = 0;
+        });
+
+        const updateStick = (touch) => {
+            let dx = touch.clientX - stickCenter.x;
+            let dy = touch.clientY - stickCenter.y;
+            const maxDist = 40;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            if (dist > maxDist) {
+                dx = (dx / dist) * maxDist;
+                dy = (dy / dist) * maxDist;
+            }
+            knob.style.transform = `translate(${dx}px, ${dy}px)`;
+            this.input.x = dx / maxDist;
+            this.input.y = dy / maxDist;
+        };
+
+        const btnFire = document.getElementById('btn-fire');
+        btnFire.addEventListener('touchstart', (e) => { e.preventDefault(); this.input.fire = true; });
+        btnFire.addEventListener('touchend', (e) => { e.preventDefault(); this.input.fire = false; });
+
+        const btnMode = document.getElementById('btn-mode');
+        btnMode.addEventListener('touchstart', (e) => { e.preventDefault(); this.switchMode(); });
+    }
+
+    switchMode() {
+        this.currentModeIndex = (this.currentModeIndex + 1) % this.modes.length;
+        this.updateUI();
+        // モード切替時のエフェクト
+        this.triggerSpeedLines(20);
+    }
+
+    updateUI() {
+        const mode = this.modes[this.currentModeIndex];
+        document.getElementById('mode-display').innerText = mode.name;
+        document.getElementById('mode-display').style.color = mode.color;
+        document.getElementById('mode-desc').innerText = mode.desc;
+        document.getElementById('debug-mass').innerText = mode.mass.toFixed(1);
+        document.getElementById('debug-drag').innerText = mode.drag.toFixed(3);
+    }
+
+    triggerSpeedLines(count) {
+        for(let i=0; i<count; i++) {
+            const line = this.fxLines.get();
+            if (line) {
+                line.angle = Math.random() * Math.PI * 2;
+                line.life = 1.0;
+                line.maxLife = Math.random() * 0.5 + 0.2;
+                line.speed = Math.random() * 500 + 500;
+            }
+        }
+    }
+
+    loop(currentTime) {
+        const dt = Math.min((currentTime - this.lastTime) / 1000, 0.1); // max 100ms
+        this.lastTime = currentTime;
+
+        this.update(dt);
+        this.draw();
+
+        requestAnimationFrame(this.loop.bind(this));
+    }
+
+    update(dt) {
+        // 背景の更新
+        this.stars.forEachActive(star => {
+            star.y += star.speed * (1 + (this.jerkIntensity * 2)); // 加速時に星も速く流れる演出
+            if (star.y > this.canvas.height) {
+                star.y = 0;
+                star.x = Math.random() * this.canvas.width;
+            }
+        });
+
+        // ZMF: 機体の更新
+        this.player.update(dt, this.input, this.modes[this.currentModeIndex]);
+
+        // 弾の更新と生成
+        if (this.input.fire && performance.now() - (this.lastFireTime || 0) > 100) {
+            const bullet = this.bullets.get();
+            if (bullet) {
+                bullet.x = this.player.x;
+                bullet.y = this.player.y - 20;
+                bullet.vx = this.player.vx * 0.2; // 慣性を少し引き継ぐ
+                bullet.vy = -800;
+                this.lastFireTime = performance.now();
+            }
+        }
+
+        this.bullets.forEachActive(b => {
+            b.x += b.vx * dt;
+            b.y += b.vy * dt;
+            if (b.y < -50 || b.x < -50 || b.x > this.canvas.width + 50) b.active = false;
+        });
+
+        // FXの更新
+        this.fxLines.forEachActive(line => {
+            line.life -= dt / line.maxLife;
+            if (line.life <= 0) line.active = false;
+        });
+        
+        // 視覚ノイズの減衰
+        this.jerkIntensity = Math.max(0, this.jerkIntensity - dt * 5);
+    }
+
+    draw() {
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        this.fxCtx.clearRect(0, 0, this.fxCanvas.width, this.fxCanvas.height);
+
+        // 星の描画
+        this.ctx.fillStyle = '#fff';
+        this.stars.forEachActive(star => {
+            const brightness = Math.floor(star.depth * 255);
+            this.ctx.fillStyle = `rgba(${brightness}, ${brightness}, ${brightness+50}, ${star.depth})`;
+            this.ctx.fillRect(star.x, star.y, star.size, star.size);
+        });
+
+        // 弾の描画
+        const mode = this.modes[this.currentModeIndex];
+        this.ctx.fillStyle = mode.color;
+        this.bullets.forEachActive(b => {
+            this.ctx.fillRect(b.x - 2, b.y - 10, 4, 20);
+        });
+
+        // 機体の描画
+        this.player.draw(this.ctx, mode.color);
+
+        // ZMF: 視覚ノイズ（スピードライン）の描画
+        if (this.jerkIntensity > 0.1 || Array.from(this.fxLines.pool).some(l => l.active)) {
+            const cx = this.canvas.width / 2;
+            const cy = this.canvas.height / 2;
+            
+            this.fxLines.forEachActive(line => {
+                const dist = (1.0 - line.life) * line.speed + 100;
+                const len = 100 * line.life;
+                const x1 = cx + Math.cos(line.angle) * dist;
+                const y1 = cy + Math.sin(line.angle) * dist;
+                const x2 = cx + Math.cos(line.angle) * (dist + len);
+                const y2 = cy + Math.sin(line.angle) * (dist + len);
+                
+                this.fxCtx.beginPath();
+                this.fxCtx.moveTo(x1, y1);
+                this.fxCtx.lineTo(x2, y2);
+                this.fxCtx.strokeStyle = `rgba(255, 255, 255, ${line.life * 0.5})`;
+                this.fxCtx.lineWidth = 2;
+                this.fxCtx.stroke();
+            });
+        }
+    }
+}
+
+// ZMF: Inertia Core & Angular Dynamics の実装
+class Player {
+    constructor(game) {
+        this.game = game;
+        this.x = game.canvas.width / 2;
+        this.y = game.canvas.height * 0.8;
+        this.vx = 0;
+        this.vy = 0;
+        this.ax = 0;
+        this.ay = 0;
+        
+        // Angular Dynamics
+        this.roll = 0; 
+        
+        // 過去の加速度（Jerk計算用）
+        this.lastAx = 0;
+        this.lastAy = 0;
+    }
+
+    update(dt, input, mode) {
+        // ZMF 3.1: 速度Verlet法ベースの運動モデルと非線形抗力
+        
+        // 1. 推力の計算
+        let forceX = input.x * mode.force;
+        let forceY = input.y * mode.force;
+
+        // 2. 加速度の計算 (F = ma -> a = F/m)
+        this.ax = forceX / mode.mass;
+        this.ay = forceY / mode.mass;
+
+        // Jerk(躍度/加速度の変化率)の計算 -> 視覚ノイズの発火トリガー
+        const jerkX = (this.ax - this.lastAx) / dt;
+        const jerkY = (this.ay - this.lastAy) / dt;
+        const jerkMag = Math.sqrt(jerkX*jerkX + jerkY*jerkY);
+        
+        if (jerkMag > 50000) { // 急加速を検知
+            this.game.jerkIntensity = Math.min(1.0, this.game.jerkIntensity + 0.5);
+            if (Math.random() > 0.5) this.game.triggerSpeedLines(5);
+        }
+
+        this.lastAx = this.ax;
+        this.lastAy = this.ay;
+
+        // 3. 抗力の計算 (非線形: 速度の二乗に比例、またはシンプルに速度に比例)
+        // 今回はシンプル化のため、設定されたdrag係数を用いた減衰
+        const speedSq = this.vx * this.vx + this.vy * this.vy;
+        const speed = Math.sqrt(speedSq);
+        
+        let dragForceX = 0;
+        let dragForceY = 0;
+        if (speed > 0) {
+            // 速度に比例する基本的な粘性抵抗
+            dragForceX = this.vx * mode.drag * 10;
+            dragForceY = this.vy * mode.drag * 10;
+        }
+
+        // 4. 速度の更新 (v = v + (a - drag) * dt)
+        this.vx += (this.ax - dragForceX) * dt;
+        this.vy += (this.ay - dragForceY) * dt;
+
+        // 5. 位置の更新 (x = x + v * dt)
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
+
+        // 画面外に出ないようにする境界処理
+        const margin = 20;
+        if (this.x < margin) { this.x = margin; this.vx *= -0.5; }
+        if (this.x > this.game.canvas.width - margin) { this.x = this.game.canvas.width - margin; this.vx *= -0.5; }
+        if (this.y < margin) { this.y = margin; this.vy *= -0.5; }
+        if (this.y > this.game.canvas.height - margin) { this.y = this.game.canvas.height - margin; this.vy *= -0.5; }
+
+        // ZMF 7.1: 適応的バンク・ダンピング (Angular Dynamics)
+        // 横方向の速度に応じて機体を傾ける。入力がない場合は滑らかに戻る。
+        const targetRoll = (this.vx / 1000) * (Math.PI / 4); // 最大約45度
+        
+        // シグモイド/LERPによる滑らかな水平復元
+        this.roll += (targetRoll - this.roll) * (dt * 10);
+    }
+
+    draw(ctx, color) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.roll); // バンク角の適用
+
+        // エンジン炎の描画（加速度依存）
+        const thrust = Math.max(0, -this.ay / 1000) + 0.5; // 前進加速度またはアイドリング
+        ctx.fillStyle = 'rgba(255, 100, 0, 0.8)';
+        ctx.beginPath();
+        ctx.moveTo(-8, 10);
+        ctx.lineTo(8, 10);
+        ctx.lineTo(0, 10 + Math.random() * 20 * thrust + 10);
+        ctx.fill();
+
+        // 機体本体の描画
+        ctx.fillStyle = '#222';
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        
+        ctx.beginPath();
+        ctx.moveTo(0, -20); // 機首
+        ctx.lineTo(15, 15); // 右翼
+        ctx.lineTo(0, 10);  // 後部
+        ctx.lineTo(-15, 15); // 左翼
+        ctx.closePath();
+        
+        ctx.fill();
+        ctx.stroke();
+
+        // キャノピー
+        ctx.fillStyle = 'rgba(0, 170, 255, 0.5)';
+        ctx.beginPath();
+        ctx.moveTo(0, -5);
+        ctx.lineTo(4, 5);
+        ctx.lineTo(-4, 5);
+        ctx.fill();
+
+        ctx.restore();
+    }
+}
+
+// ゲーム起動
+window.onload = () => {
+    new Game();
+};
+</script>
+</body>
+</html>
