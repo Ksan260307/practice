@@ -14,7 +14,7 @@
             overflow: hidden;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             color: #fff;
-            touch-action: none; /* スマホでのスクロール防止 */
+            touch-action: none;
         }
         canvas {
             display: block;
@@ -74,6 +74,7 @@
             border-radius: 8px;
             font-size: 12px;
             color: #ccc;
+            text-align: right;
         }
         .key {
             display: inline-block;
@@ -84,7 +85,6 @@
             font-weight: bold;
             margin: 0 2px;
         }
-        /* スピードライン用キャンバス */
         #fx-canvas {
             position: absolute;
             top: 0;
@@ -92,8 +92,6 @@
             pointer-events: none;
             mix-blend-mode: screen;
         }
-        
-        /* スマホ用オンスクリーンボタン */
         #mobile-controls {
             display: none;
             position: absolute;
@@ -101,6 +99,7 @@
             left: 0;
             width: 100%;
             justify-content: space-between;
+            align-items: flex-end;
             padding: 0 20px;
             box-sizing: border-box;
             pointer-events: none;
@@ -113,10 +112,10 @@
             background: rgba(0, 170, 255, 0.2);
             border: 2px solid rgba(0, 170, 255, 0.5);
             color: #fff;
-            width: 60px;
-            height: 60px;
-            border-radius: 30px;
-            font-size: 12px;
+            width: 55px;
+            height: 55px;
+            border-radius: 27.5px;
+            font-size: 10px;
             font-weight: bold;
             display: flex;
             align-items: center;
@@ -124,7 +123,7 @@
             pointer-events: auto;
             user-select: none;
         }
-        .m-btn:active { background: rgba(0, 170, 255, 0.6); }
+        .m-btn:active { filter: brightness(1.5); }
     </style>
 </head>
 <body>
@@ -145,9 +144,12 @@
     </div>
 
     <div class="controls">
-        <div><span class="key">W</span><span class="key">A</span><span class="key">S</span><span class="key">D</span> または 矢印キー : 移動</div>
-        <div style="margin-top: 5px;"><span class="key">SPACE</span> : ショット</div>
-        <div style="margin-top: 5px;"><span class="key">SHIFT</span> : モード切替 (A/B/C)</div>
+        <div>移動 : <span class="key">W</span><span class="key">A</span><span class="key">S</span><span class="key">D</span> / 矢印</div>
+        <div style="margin-top: 5px;">ショット : <span class="key">SPACE</span></div>
+        <div style="margin-top: 5px; color: #0f0;">マルチロックレーザー : <span class="key">F</span> (長押し)</div>
+        <div style="margin-top: 5px;">モード切替 : <span class="key">SHIFT</span></div>
+        <div style="margin-top: 5px; color: #fa0;">ダッシュ : <span class="key">E</span> (長押し)</div>
+        <div style="margin-top: 5px; color: #0ff;">ゼロシフト : <span class="key">Q</span></div>
     </div>
 </div>
 
@@ -156,15 +158,22 @@
         <div style="width: 40px; height: 40px; border-radius: 20px; background: rgba(0,170,255,0.5); position: absolute; top: 40px; left: 40px;" id="stick-knob"></div>
     </div>
     <div style="display: flex; flex-direction: column; gap: 10px;">
-        <div class="m-btn" id="btn-mode">MODE</div>
-        <div class="m-btn" id="btn-fire">FIRE</div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px;">
+            <div class="m-btn" id="btn-zero" style="background: rgba(0, 255, 255, 0.2); border-color: #0ff;">ZERO</div>
+            <div class="m-btn" id="btn-dash" style="background: rgba(255, 170, 0, 0.2); border-color: #fa0;">DASH</div>
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px;">
+            <div class="m-btn" id="btn-mode">MODE</div>
+            <!-- ロックオンボタン追加 -->
+            <div class="m-btn" id="btn-lock" style="background: rgba(0, 255, 0, 0.2); border-color: #0f0;">LOCK</div>
+            <div class="m-btn" id="btn-fire" style="background: rgba(255, 50, 100, 0.2); border-color: #f36;">FIRE</div>
+        </div>
     </div>
 </div>
 
 <script>
 /**
  * UCD-F: Zero-Allocation (固定長プール) の概念実装
- * ガベージコレクションを避けるため、オブジェクトを再利用する
  */
 class ObjectPool {
     constructor(createFn, size) {
@@ -193,7 +202,7 @@ class Game {
         this.resize();
         window.addEventListener('resize', () => this.resize());
 
-        this.input = { x: 0, y: 0, fire: false, modeSwitch: false };
+        this.input = { x: 0, y: 0, fire: false, modeSwitch: false, dash: false, zeroShift: false, homing: false };
         this.setupInputs();
 
         // 質量変動型ABCモデルの定義
@@ -202,23 +211,32 @@ class Game {
             { id: 'B', name: '標準 (Balance)', desc: '操作性と慣性のバランスが取れた標準状態。', mass: 1.0, drag: 0.05, force: 1200, color: '#00aaff' },
             { id: 'C', name: '重装 (Cooling)', desc: '質量が大きく、どっしりとした慣性が残る。', mass: 2.5, drag: 0.015, force: 900, color: '#33ffaa' }
         ];
-        this.currentModeIndex = 1; // Default to B
+        this.currentModeIndex = 1;
 
         this.player = new Player(this);
         
-        // オブジェクトプール（弾、星、パーティクル）
+        // オブジェクトプール
         this.bullets = new ObjectPool(() => ({ active: false, x: 0, y: 0, vx: 0, vy: 0 }), 100);
         this.stars = new ObjectPool(() => ({ active: false, x: 0, y: 0, speed: 0, size: 0, depth: 0 }), 200);
         this.fxLines = new ObjectPool(() => ({ active: false, angle: 0, life: 0, maxLife: 0, speed: 0 }), 50);
+        this.ghosts = new ObjectPool(() => ({ active: false, x: 0, y: 0, roll: 0, life: 0 }), 30);
+        
+        // 敵 (オブジェクト再利用時の識別用に id を付与)
+        this.enemyIdCounter = 0;
+        this.enemies = new ObjectPool(() => ({ active: false, id: 0, x: 0, y: 0, vx: 0, vy: 0, hp: 0, size: 0, color: '', locked: false }), 200);
+        this.particles = new ObjectPool(() => ({ active: false, x: 0, y: 0, vx: 0, vy: 0, life: 0, maxLife: 0, color: '' }), 300);
+
+        // 新規：ホーミングレーザー用プール (軌跡保存用のFloat32Arrayを含むゼロアロケーション対応)
+        this.homingLasers = new ObjectPool(() => ({
+            active: false, x: 0, y: 0, vx: 0, vy: 0, target: null, targetId: 0,
+            historyX: new Float32Array(15), historyY: new Float32Array(15), historyCount: 0
+        }), 100);
 
         this.initStars();
-
         this.lastTime = performance.now();
         this.updateUI();
         
-        // ZMF: 視覚ノイズ用パラメータ
         this.jerkIntensity = 0;
-
         requestAnimationFrame(this.loop.bind(this));
     }
 
@@ -235,7 +253,7 @@ class Game {
             if (star) {
                 star.x = Math.random() * this.canvas.width;
                 star.y = Math.random() * this.canvas.height;
-                star.depth = Math.random(); // 0.0 to 1.0
+                star.depth = Math.random();
                 star.speed = (star.depth * 5) + 1;
                 star.size = star.depth * 2 + 0.5;
             }
@@ -248,7 +266,6 @@ class Game {
         const updateAxis = () => {
             this.input.y = (keys.KeyS || keys.ArrowDown ? 1 : 0) - (keys.KeyW || keys.ArrowUp ? 1 : 0);
             this.input.x = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
-            // 正規化
             const len = Math.sqrt(this.input.x ** 2 + this.input.y ** 2);
             if (len > 0) {
                 this.input.x /= len;
@@ -259,6 +276,9 @@ class Game {
         window.addEventListener('keydown', (e) => {
             if (keys.hasOwnProperty(e.code)) keys[e.code] = true;
             if (e.code === 'Space') this.input.fire = true;
+            if (e.code === 'KeyF') this.input.homing = true; // ホーミングキー
+            if (e.code === 'KeyE') this.input.dash = true;
+            if (e.code === 'KeyQ') this.input.zeroShift = true;
             if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
                 if (!this.input.modeSwitch) {
                     this.switchMode();
@@ -271,11 +291,13 @@ class Game {
         window.addEventListener('keyup', (e) => {
             if (keys.hasOwnProperty(e.code)) keys[e.code] = false;
             if (e.code === 'Space') this.input.fire = false;
+            if (e.code === 'KeyF') this.input.homing = false;
+            if (e.code === 'KeyE') this.input.dash = false;
             if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') this.input.modeSwitch = false;
             updateAxis();
         });
 
-        // スマホ仮想ジョイスティック簡易実装
+        // スマホ仮想ジョイスティック
         const stick = document.getElementById('virtual-stick');
         const knob = document.getElementById('stick-knob');
         let stickActive = false;
@@ -313,9 +335,18 @@ class Game {
             this.input.y = dy / maxDist;
         };
 
-        const btnFire = document.getElementById('btn-fire');
-        btnFire.addEventListener('touchstart', (e) => { e.preventDefault(); this.input.fire = true; });
-        btnFire.addEventListener('touchend', (e) => { e.preventDefault(); this.input.fire = false; });
+        const bindBtn = (id, field, isTrigger = false) => {
+            const btn = document.getElementById(id);
+            btn.addEventListener('touchstart', (e) => { e.preventDefault(); this.input[field] = true; });
+            if (!isTrigger) {
+                btn.addEventListener('touchend', (e) => { e.preventDefault(); this.input[field] = false; });
+            }
+        };
+
+        bindBtn('btn-fire', 'fire');
+        bindBtn('btn-dash', 'dash');
+        bindBtn('btn-lock', 'homing'); // ロックオンボタン
+        bindBtn('btn-zero', 'zeroShift', true);
 
         const btnMode = document.getElementById('btn-mode');
         btnMode.addEventListener('touchstart', (e) => { e.preventDefault(); this.switchMode(); });
@@ -324,7 +355,6 @@ class Game {
     switchMode() {
         this.currentModeIndex = (this.currentModeIndex + 1) % this.modes.length;
         this.updateUI();
-        // モード切替時のエフェクト
         this.triggerSpeedLines(20);
     }
 
@@ -349,8 +379,35 @@ class Game {
         }
     }
 
+    spawnGhost(x, y, roll) {
+        const ghost = this.ghosts.get();
+        if (ghost) {
+            ghost.x = x;
+            ghost.y = y;
+            ghost.roll = roll;
+            ghost.life = 1.0;
+        }
+    }
+
+    spawnExplosion(x, y, color) {
+        for (let i = 0; i < 15; i++) {
+            const p = this.particles.get();
+            if (p) {
+                p.x = x;
+                p.y = y;
+                const angle = Math.random() * Math.PI * 2;
+                const speed = Math.random() * 250 + 50;
+                p.vx = Math.cos(angle) * speed + this.player.vx * 0.1;
+                p.vy = Math.sin(angle) * speed + this.player.vy * 0.1;
+                p.life = 1.0;
+                p.maxLife = Math.random() * 0.4 + 0.2;
+                p.color = Math.random() > 0.5 ? color : '#fff';
+            }
+        }
+    }
+
     loop(currentTime) {
-        const dt = Math.min((currentTime - this.lastTime) / 1000, 0.1); // max 100ms
+        const dt = Math.min((currentTime - this.lastTime) / 1000, 0.1);
         this.lastTime = currentTime;
 
         this.update(dt);
@@ -360,26 +417,25 @@ class Game {
     }
 
     update(dt) {
-        // 背景の更新
         this.stars.forEachActive(star => {
-            star.y += star.speed * (1 + (this.jerkIntensity * 2)); // 加速時に星も速く流れる演出
+            star.y += star.speed * (1 + (this.jerkIntensity * 2));
             if (star.y > this.canvas.height) {
                 star.y = 0;
                 star.x = Math.random() * this.canvas.width;
             }
         });
 
-        // ZMF: 機体の更新
+        // 機体とロックオンの更新
         this.player.update(dt, this.input, this.modes[this.currentModeIndex]);
 
-        // 弾の更新と生成
-        if (this.input.fire && performance.now() - (this.lastFireTime || 0) > 100) {
+        // 通常弾の更新
+        if (this.input.fire && performance.now() - (this.lastFireTime || 0) > 80) {
             const bullet = this.bullets.get();
             if (bullet) {
                 bullet.x = this.player.x;
                 bullet.y = this.player.y - 20;
-                bullet.vx = this.player.vx * 0.2; // 慣性を少し引き継ぐ
-                bullet.vy = -800;
+                bullet.vx = this.player.vx * 0.2;
+                bullet.vy = -1200;
                 this.lastFireTime = performance.now();
             }
         }
@@ -390,21 +446,146 @@ class Game {
             if (b.y < -50 || b.x < -50 || b.x > this.canvas.width + 50) b.active = false;
         });
 
-        // FXの更新
+        // --- ZMF Assist Controller: Pro-Nav (比例航法) によるホーミングレーザーの更新 ---
+        this.homingLasers.forEachActive(l => {
+            // 軌跡の保存（リングバッファ）
+            l.historyX[l.historyCount % 15] = l.x;
+            l.historyY[l.historyCount % 15] = l.y;
+            l.historyCount++;
+
+            const speed = 1400; // レーザーの基本速度
+            
+            // ターゲットが生きていて、同一IDであるか確認
+            if (l.target && l.target.active && l.target.id === l.targetId) {
+                const dx = l.target.x - l.x;
+                const dy = l.target.y - l.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                
+                // ターゲットへの理想速度ベクトル
+                const targetVx = (dx / dist) * speed;
+                const targetVy = (dy / dist) * speed;
+
+                // 旋回性能（曲がりやすさ）
+                const turnRate = 8.0; 
+                l.vx += (targetVx - l.vx) * turnRate * dt;
+                l.vy += (targetVy - l.vy) * turnRate * dt;
+            }
+
+            // 現在の速度を正規化して速度を一定に保つ（ZMF: 有機的な加減速より軌道美を優先）
+            const currentSpeed = Math.sqrt(l.vx * l.vx + l.vy * l.vy);
+            if (currentSpeed > 0) {
+                l.vx = (l.vx / currentSpeed) * speed;
+                l.vy = (l.vy / currentSpeed) * speed;
+            }
+
+            l.x += l.vx * dt;
+            l.y += l.vy * dt;
+
+            // 画面外判定
+            if (l.y < -100 || l.x < -100 || l.x > this.canvas.width + 100 || l.y > this.canvas.height + 100) {
+                l.active = false;
+            }
+        });
+
+        // 敵の生成
+        if (Math.random() < 0.15) { 
+            const enemy = this.enemies.get();
+            if (enemy) {
+                enemy.id = ++this.enemyIdCounter; // ユニークID付与
+                enemy.x = Math.random() * this.canvas.width;
+                enemy.y = -30;
+                enemy.vx = (Math.random() - 0.5) * 100;
+                enemy.vy = Math.random() * 200 + 150;
+                enemy.size = Math.random() * 10 + 10;
+                enemy.hp = Math.floor(enemy.size / 10) + 1; // 1〜3 HP
+                enemy.locked = false;
+                const colors = ['#f36', '#fa0', '#f0f', '#0f3'];
+                enemy.color = colors[Math.floor(Math.random() * colors.length)];
+            }
+        }
+
+        // 敵の更新と衝突判定
+        this.enemies.forEachActive(e => {
+            e.x += e.vx * dt;
+            e.y += e.vy * dt;
+
+            if (e.y > this.canvas.height + 50 || e.x < -50 || e.x > this.canvas.width + 50) {
+                e.active = false;
+                if (e.locked) this.player.removeLock(e);
+            }
+
+            // 通常弾との衝突
+            this.bullets.forEachActive(b => {
+                if (!e.active || !b.active) return;
+                const dx = e.x - b.x;
+                const dy = e.y - b.y;
+                if (dx * dx + dy * dy < (e.size + 10) * (e.size + 10)) {
+                    b.active = false;
+                    e.hp--;
+                    if (e.hp <= 0) this.destroyEnemy(e);
+                }
+            });
+
+            // ホーミングレーザーとの衝突
+            this.homingLasers.forEachActive(l => {
+                if (!e.active || !l.active) return;
+                const dx = e.x - l.x;
+                const dy = e.y - l.y;
+                if (dx * dx + dy * dy < (e.size + 15) * (e.size + 15)) {
+                    l.active = false; // レーザー消滅
+                    e.hp -= 2; // レーザーは高威力
+                    this.spawnExplosion(l.x, l.y, '#0ff'); // レーザー着弾の青い火花
+                    if (e.hp <= 0) this.destroyEnemy(e);
+                }
+            });
+
+            // 自機との衝突
+            const isInvincible = this.player.isDashing || this.player.zeroShiftCooldown > 1.3;
+            if (e.active && !isInvincible) {
+                const dx = e.x - this.player.x;
+                const dy = e.y - this.player.y;
+                if (dx * dx + dy * dy < (e.size + 12) * (e.size + 12)) {
+                    this.destroyEnemy(e);
+                    this.spawnExplosion(e.x, e.y, '#f00');
+                    this.jerkIntensity = 1.0;
+                    this.triggerSpeedLines(10);
+                }
+            }
+        });
+
+        // パーティクルの更新
+        this.particles.forEachActive(p => {
+            p.x += p.vx * dt;
+            p.y += p.vy * dt;
+            p.life -= dt / p.maxLife;
+            if (p.life <= 0) p.active = false;
+        });
+
         this.fxLines.forEachActive(line => {
             line.life -= dt / line.maxLife;
             if (line.life <= 0) line.active = false;
         });
         
-        // 視覚ノイズの減衰
+        this.ghosts.forEachActive(ghost => {
+            ghost.life -= dt * 2.5;
+            if (ghost.life <= 0) ghost.active = false;
+        });
+
         this.jerkIntensity = Math.max(0, this.jerkIntensity - dt * 5);
+    }
+
+    destroyEnemy(e) {
+        e.active = false;
+        if (e.locked) this.player.removeLock(e);
+        this.spawnExplosion(e.x, e.y, e.color);
+        this.jerkIntensity = Math.min(1.0, this.jerkIntensity + 0.15);
     }
 
     draw() {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         this.fxCtx.clearRect(0, 0, this.fxCanvas.width, this.fxCanvas.height);
 
-        // 星の描画
+        // 星
         this.ctx.fillStyle = '#fff';
         this.stars.forEachActive(star => {
             const brightness = Math.floor(star.depth * 255);
@@ -412,17 +593,126 @@ class Game {
             this.ctx.fillRect(star.x, star.y, star.size, star.size);
         });
 
-        // 弾の描画
+        // 残像
+        this.ghosts.forEachActive(ghost => {
+            this.ctx.save();
+            this.ctx.translate(ghost.x, ghost.y);
+            this.ctx.rotate(ghost.roll);
+            this.ctx.fillStyle = `rgba(0, 255, 255, ${ghost.life * 0.5})`;
+            this.ctx.beginPath();
+            this.ctx.moveTo(0, -20);
+            this.ctx.lineTo(15, 15);
+            this.ctx.lineTo(0, 10);
+            this.ctx.lineTo(-15, 15);
+            this.ctx.closePath();
+            this.ctx.fill();
+            this.ctx.restore();
+        });
+
+        // ロックオンサークルとレティクルの描画
+        if (this.player.lockRadius > 0) {
+            this.ctx.strokeStyle = 'rgba(0, 255, 255, 0.4)';
+            this.ctx.lineWidth = 1;
+            this.ctx.beginPath();
+            this.ctx.arc(this.player.x, this.player.y, this.player.lockRadius, 0, Math.PI * 2);
+            this.ctx.stroke();
+
+            // ロックオンされた敵にレティクルを描画
+            this.player.lockedTargets.forEach(target => {
+                if (target && target.active) {
+                    this.ctx.strokeStyle = '#0ff';
+                    this.ctx.lineWidth = 2;
+                    const s = target.size + 8;
+                    // 四隅のカッコを描く
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(target.x - s, target.y - s + 5);
+                    this.ctx.lineTo(target.x - s, target.y - s);
+                    this.ctx.lineTo(target.x - s + 5, target.y - s);
+                    
+                    this.ctx.moveTo(target.x + s - 5, target.y - s);
+                    this.ctx.lineTo(target.x + s, target.y - s);
+                    this.ctx.lineTo(target.x + s, target.y - s + 5);
+
+                    this.ctx.moveTo(target.x - s, target.y + s - 5);
+                    this.ctx.lineTo(target.x - s, target.y + s);
+                    this.ctx.lineTo(target.x - s + 5, target.y + s);
+
+                    this.ctx.moveTo(target.x + s - 5, target.y + s);
+                    this.ctx.lineTo(target.x + s, target.y + s);
+                    this.ctx.lineTo(target.x + s, target.y + s - 5);
+                    this.ctx.stroke();
+                }
+            });
+        }
+
+        // パーティクル
+        this.particles.forEachActive(p => {
+            this.ctx.fillStyle = p.color;
+            this.ctx.globalAlpha = p.life;
+            this.ctx.fillRect(p.x - 2, p.y - 2, 4, 4);
+            this.ctx.globalAlpha = 1.0;
+        });
+
+        // ホーミングレーザーの描画（軌跡を描画）
+        this.homingLasers.forEachActive(l => {
+            this.ctx.beginPath();
+            let count = Math.min(l.historyCount, 15);
+            let startIdx = l.historyCount > 15 ? (l.historyCount % 15) : 0;
+            
+            for (let i = 0; i < count; i++) {
+                let idx = (startIdx + i) % 15;
+                if (i === 0) this.ctx.moveTo(l.historyX[idx], l.historyY[idx]);
+                else this.ctx.lineTo(l.historyX[idx], l.historyY[idx]);
+            }
+            this.ctx.lineTo(l.x, l.y);
+            
+            // レーザーの軌跡（シアン）
+            this.ctx.strokeStyle = '#0ff';
+            this.ctx.lineWidth = 3;
+            this.ctx.lineCap = 'round';
+            this.ctx.lineJoin = 'round';
+            this.ctx.stroke();
+
+            // レーザーの先端（白）
+            this.ctx.fillStyle = '#fff';
+            this.ctx.beginPath();
+            this.ctx.arc(l.x, l.y, 4, 0, Math.PI * 2);
+            this.ctx.fill();
+        });
+
+        // 敵
+        this.enemies.forEachActive(e => {
+            this.ctx.fillStyle = '#111';
+            this.ctx.strokeStyle = e.color;
+            this.ctx.lineWidth = 2;
+            
+            this.ctx.save();
+            this.ctx.translate(e.x, e.y);
+            this.ctx.rotate(Math.atan2(e.vy, e.vx) - Math.PI/2);
+            
+            this.ctx.beginPath();
+            this.ctx.moveTo(0, e.size);
+            this.ctx.lineTo(e.size * 0.8, -e.size * 0.8);
+            this.ctx.lineTo(0, -e.size * 0.4);
+            this.ctx.lineTo(-e.size * 0.8, -e.size * 0.8);
+            this.ctx.closePath();
+            
+            this.ctx.fill();
+            this.ctx.stroke();
+            this.ctx.restore();
+        });
+
+        // 弾
         const mode = this.modes[this.currentModeIndex];
         this.ctx.fillStyle = mode.color;
         this.bullets.forEachActive(b => {
             this.ctx.fillRect(b.x - 2, b.y - 10, 4, 20);
         });
 
-        // 機体の描画
+        // 機体
         this.player.draw(this.ctx, mode.color);
 
-        // ZMF: 視覚ノイズ（スピードライン）の描画
+        // 視覚ノイズ
         if (this.jerkIntensity > 0.1 || Array.from(this.fxLines.pool).some(l => l.active)) {
             const cx = this.canvas.width / 2;
             const cy = this.canvas.height / 2;
@@ -457,104 +747,185 @@ class Player {
         this.ax = 0;
         this.ay = 0;
         
-        // Angular Dynamics
         this.roll = 0; 
-        
-        // 過去の加速度（Jerk計算用）
         this.lastAx = 0;
         this.lastAy = 0;
+        
+        this.zeroShiftCooldown = 0;
+        this.isDashing = false;
+
+        // マルチロック・レーザー用変数
+        this.wasHoming = false;
+        this.lockRadius = 0;
+        this.lockedTargets = []; // ゼロアロケーション維持のため要素を再利用
+    }
+
+    removeLock(enemy) {
+        const index = this.lockedTargets.indexOf(enemy);
+        if (index !== -1) {
+            this.lockedTargets.splice(index, 1);
+        }
     }
 
     update(dt, input, mode) {
-        // ZMF 3.1: 速度Verlet法ベースの運動モデルと非線形抗力
-        
-        // 1. 推力の計算
-        let forceX = input.x * mode.force;
-        let forceY = input.y * mode.force;
+        this.isDashing = input.dash;
 
-        // 2. 加速度の計算 (F = ma -> a = F/m)
-        this.ax = forceX / mode.mass;
-        this.ay = forceY / mode.mass;
+        // --- マルチロック・レーザー (Homing System) ---
+        if (input.homing) {
+            // ロックオンサークル拡大
+            this.lockRadius = Math.min(this.lockRadius + dt * 1500, 600);
+            
+            // サークル内の敵を捕捉 (最大12体)
+            this.game.enemies.forEachActive(e => {
+                if (!e.locked && this.lockedTargets.length < 12) {
+                    const dx = e.x - this.x;
+                    const dy = e.y - this.y;
+                    if (dx * dx + dy * dy < this.lockRadius * this.lockRadius) {
+                        e.locked = true;
+                        this.lockedTargets.push(e);
+                    }
+                }
+            });
+        } else if (this.wasHoming) {
+            // キーを離した瞬間、ロックした敵にレーザーを発射
+            this.lockedTargets.forEach(target => {
+                if (target && target.active) {
+                    const laser = this.game.homingLasers.get();
+                    if (laser) {
+                        laser.x = this.x;
+                        laser.y = this.y - 20;
+                        // 発射直後は放射状にランダムに散らす（後にホーミングする）
+                        const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.5;
+                        const initialSpeed = 800;
+                        laser.vx = Math.cos(angle) * initialSpeed + this.vx * 0.5;
+                        laser.vy = Math.sin(angle) * initialSpeed + this.vy * 0.5;
+                        laser.target = target;
+                        laser.targetId = target.id;
+                        laser.historyCount = 0;
+                    }
+                }
+                target.locked = false;
+            });
+            // 配列を空にする（新規割り当てを避ける）
+            this.lockedTargets.length = 0;
+            this.lockRadius = 0;
+        }
+        this.wasHoming = input.homing;
 
-        // Jerk(躍度/加速度の変化率)の計算 -> 視覚ノイズの発火トリガー
+        // --- ゼロシフト (Zero Shift) ---
+        if (this.zeroShiftCooldown > 0) {
+            this.zeroShiftCooldown -= dt;
+        }
+
+        if (input.zeroShift) {
+            if (this.zeroShiftCooldown <= 0 && (input.x !== 0 || input.y !== 0)) {
+                const shiftDist = 250;
+                for (let i = 0; i <= 5; i++) {
+                    const step = i / 5;
+                    this.game.spawnGhost(
+                        this.x + input.x * shiftDist * step, 
+                        this.y + input.y * shiftDist * step, 
+                        this.roll
+                    );
+                }
+                this.x += input.x * shiftDist;
+                this.y += input.y * shiftDist;
+                
+                this.vx = input.x * 1200;
+                this.vy = input.y * 1200;
+                
+                this.game.jerkIntensity = 1.0;
+                this.game.triggerSpeedLines(40);
+                
+                this.zeroShiftCooldown = 1.5;
+            }
+            input.zeroShift = false;
+        }
+
+        // --- 速度Verlet積分とダッシュ ---
+        let currentForce = mode.force * (this.isDashing ? 2.5 : 1.0);
+        let currentDrag = mode.drag * (this.isDashing ? 0.8 : 1.0);
+
+        this.ax = (input.x * currentForce) / mode.mass;
+        this.ay = (input.y * currentForce) / mode.mass;
+
         const jerkX = (this.ax - this.lastAx) / dt;
         const jerkY = (this.ay - this.lastAy) / dt;
         const jerkMag = Math.sqrt(jerkX*jerkX + jerkY*jerkY);
         
-        if (jerkMag > 50000) { // 急加速を検知
+        if (jerkMag > 50000) { 
             this.game.jerkIntensity = Math.min(1.0, this.game.jerkIntensity + 0.5);
-            if (Math.random() > 0.5) this.game.triggerSpeedLines(5);
+            if (Math.random() > 0.5) this.game.triggerSpeedLines(8);
         }
 
         this.lastAx = this.ax;
         this.lastAy = this.ay;
 
-        // 3. 抗力の計算 (非線形: 速度の二乗に比例、またはシンプルに速度に比例)
-        // 今回はシンプル化のため、設定されたdrag係数を用いた減衰
         const speedSq = this.vx * this.vx + this.vy * this.vy;
         const speed = Math.sqrt(speedSq);
         
         let dragForceX = 0;
         let dragForceY = 0;
         if (speed > 0) {
-            // 速度に比例する基本的な粘性抵抗
-            dragForceX = this.vx * mode.drag * 10;
-            dragForceY = this.vy * mode.drag * 10;
+            dragForceX = this.vx * currentDrag * 10;
+            dragForceY = this.vy * currentDrag * 10;
         }
 
-        // 4. 速度の更新 (v = v + (a - drag) * dt)
         this.vx += (this.ax - dragForceX) * dt;
         this.vy += (this.ay - dragForceY) * dt;
 
-        // 5. 位置の更新 (x = x + v * dt)
         this.x += this.vx * dt;
         this.y += this.vy * dt;
 
-        // 画面外に出ないようにする境界処理
         const margin = 20;
         if (this.x < margin) { this.x = margin; this.vx *= -0.5; }
         if (this.x > this.game.canvas.width - margin) { this.x = this.game.canvas.width - margin; this.vx *= -0.5; }
         if (this.y < margin) { this.y = margin; this.vy *= -0.5; }
         if (this.y > this.game.canvas.height - margin) { this.y = this.game.canvas.height - margin; this.vy *= -0.5; }
 
-        // ZMF 7.1: 適応的バンク・ダンピング (Angular Dynamics)
-        // 横方向の速度に応じて機体を傾ける。入力がない場合は滑らかに戻る。
-        const targetRoll = (this.vx / 1000) * (Math.PI / 4); // 最大約45度
-        
-        // シグモイド/LERPによる滑らかな水平復元
+        let targetRoll = (this.vx / 1000) * (Math.PI / 4); 
+        const maxBank = Math.PI / 2.2;
+        targetRoll = Math.max(-maxBank, Math.min(maxBank, targetRoll));
+
         this.roll += (targetRoll - this.roll) * (dt * 10);
     }
 
     draw(ctx, color) {
         ctx.save();
         ctx.translate(this.x, this.y);
-        ctx.rotate(this.roll); // バンク角の適用
+        
+        if (this.zeroShiftCooldown > 0) {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+            ctx.fillRect(-15, 25, 30, 3);
+            ctx.fillStyle = 'rgba(0, 255, 255, 0.8)';
+            const ratio = 1.0 - (this.zeroShiftCooldown / 1.5);
+            ctx.fillRect(-15, 25, 30 * ratio, 3);
+        }
 
-        // エンジン炎の描画（加速度依存）
-        const thrust = Math.max(0, -this.ay / 1000) + 0.5; // 前進加速度またはアイドリング
-        ctx.fillStyle = 'rgba(255, 100, 0, 0.8)';
+        ctx.rotate(this.roll);
+
+        const thrust = Math.max(0, -this.ay / 1000) + 0.5;
+        ctx.fillStyle = this.isDashing ? 'rgba(0, 200, 255, 0.9)' : 'rgba(255, 100, 0, 0.8)';
         ctx.beginPath();
         ctx.moveTo(-8, 10);
         ctx.lineTo(8, 10);
-        ctx.lineTo(0, 10 + Math.random() * 20 * thrust + 10);
+        ctx.lineTo(0, 10 + Math.random() * 20 * thrust * (this.isDashing ? 2.5 : 1) + 10);
         ctx.fill();
 
-        // 機体本体の描画
         ctx.fillStyle = '#222';
         ctx.strokeStyle = color;
         ctx.lineWidth = 2;
         
         ctx.beginPath();
-        ctx.moveTo(0, -20); // 機首
-        ctx.lineTo(15, 15); // 右翼
-        ctx.lineTo(0, 10);  // 後部
-        ctx.lineTo(-15, 15); // 左翼
+        ctx.moveTo(0, -20);
+        ctx.lineTo(15, 15);
+        ctx.lineTo(0, 10);
+        ctx.lineTo(-15, 15);
         ctx.closePath();
         
         ctx.fill();
         ctx.stroke();
 
-        // キャノピー
         ctx.fillStyle = 'rgba(0, 170, 255, 0.5)';
         ctx.beginPath();
         ctx.moveTo(0, -5);
