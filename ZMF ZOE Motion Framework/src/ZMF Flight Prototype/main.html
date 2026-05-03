@@ -124,12 +124,47 @@
             user-select: none;
         }
         .m-btn:active { filter: brightness(1.5); }
+        
+        /* Audio Init Overlay */
+        #start-overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 5, 15, 0.9);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            cursor: pointer;
+        }
+        .start-btn {
+            padding: 15px 40px;
+            font-size: 20px;
+            color: #0ff;
+            background: transparent;
+            border: 2px solid #0ff;
+            border-radius: 5px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.3);
+            transition: all 0.2s;
+            pointer-events: none; /* Let the overlay handle the click */
+        }
+        #start-overlay:hover .start-btn {
+            background: rgba(0, 255, 255, 0.2);
+            box-shadow: 0 0 25px rgba(0, 255, 255, 0.6);
+        }
     </style>
 </head>
 <body>
 
 <canvas id="game-canvas"></canvas>
 <canvas id="fx-canvas"></canvas>
+
+<div id="start-overlay">
+    <div style="font-size: 24px; font-weight: bold; margin-bottom: 20px; color: #fff; text-shadow: 0 0 10px #0ff;">ZMF/UCD-F Flight Prototype</div>
+    <div class="start-btn">Click to Start / Initialize Audio</div>
+</div>
 
 <div id="ui-layer">
     <div class="panel">
@@ -173,6 +208,244 @@
 
 <script>
 /**
+ * Audio System: Web Audio API Synthesizer
+ */
+class AudioSystem {
+    constructor() {
+        this.ctx = null;
+        this.isInitialized = false;
+        this.bgmOscs = [];
+        this.bgmGain = null;
+        this.notes = [130.81, 155.56, 196.00, 261.63, 311.13, 392.00, 523.25]; // C minor pentatonic
+        this.arpeggioIndex = 0;
+        this.lastArpTime = 0;
+    }
+
+    init() {
+        if (this.isInitialized) return;
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        this.ctx = new AudioContext();
+        this.isInitialized = true;
+        this.startBGM();
+    }
+
+    startBGM() {
+        // Ambient Pad
+        this.bgmGain = this.ctx.createGain();
+        this.bgmGain.gain.value = 0.1;
+        this.bgmGain.connect(this.ctx.destination);
+
+        const padNotes = [130.81, 196.00, 261.63]; // C3, G3, C4
+        padNotes.forEach(freq => {
+            const osc = this.ctx.createOscillator();
+            osc.type = 'sawtooth';
+            osc.frequency.value = freq;
+            
+            const filter = this.ctx.createBiquadFilter();
+            filter.type = 'lowpass';
+            filter.frequency.value = 800;
+            
+            // Slow LFO for filter
+            const lfo = this.ctx.createOscillator();
+            lfo.type = 'sine';
+            lfo.frequency.value = 0.1 + Math.random() * 0.1;
+            const lfoGain = this.ctx.createGain();
+            lfoGain.gain.value = 400;
+            
+            lfo.connect(lfoGain);
+            lfoGain.connect(filter.frequency);
+            
+            osc.connect(filter);
+            filter.connect(this.bgmGain);
+            
+            osc.start();
+            lfo.start();
+            this.bgmOscs.push(osc, lfo);
+        });
+    }
+
+    updateBGM(time) {
+        if (!this.isInitialized || !this.ctx) return;
+        
+        // Simple Arpeggiator (16th notes approx)
+        if (time - this.lastArpTime > 150) {
+            this.playArpNote();
+            this.lastArpTime = time;
+        }
+    }
+
+    playArpNote() {
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        
+        osc.type = 'square';
+        osc.frequency.value = this.notes[this.arpeggioIndex] * 2; // Higher octave
+        
+        // Envelope
+        gain.gain.setValueAtTime(0, this.ctx.currentTime);
+        gain.gain.linearRampToValueAtTime(0.05, this.ctx.currentTime + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.1);
+        
+        osc.connect(gain);
+        
+        // Simple echo
+        const delay = this.ctx.createDelay();
+        delay.delayTime.value = 0.3;
+        const feedback = this.ctx.createGain();
+        feedback.gain.value = 0.3;
+        
+        gain.connect(delay);
+        delay.connect(feedback);
+        feedback.connect(delay);
+        delay.connect(this.ctx.destination);
+        gain.connect(this.ctx.destination);
+
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.1);
+        
+        this.arpeggioIndex = (this.arpeggioIndex + 1 + Math.floor(Math.random() * 2)) % this.notes.length;
+    }
+
+    playShoot() {
+        if (!this.isInitialized) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(800, this.ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(100, this.ctx.currentTime + 0.1);
+        
+        gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.1);
+        
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.1);
+    }
+
+    playHomingShoot() {
+        if (!this.isInitialized) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(1200, this.ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(200, this.ctx.currentTime + 0.3);
+        
+        gain.gain.setValueAtTime(0.15, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.3);
+        
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.3);
+    }
+
+    playLockOn() {
+        if (!this.isInitialized) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(1760, this.ctx.currentTime); // A6
+        
+        gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.05);
+        
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.05);
+    }
+
+    playExplosion() {
+        if (!this.isInitialized) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        const filter = this.ctx.createBiquadFilter();
+        
+        // Fake noise with fast frequency modulation
+        osc.type = 'sawtooth';
+        osc.frequency.value = 100;
+        
+        const mod = this.ctx.createOscillator();
+        mod.type = 'square';
+        mod.frequency.value = 50;
+        const modGain = this.ctx.createGain();
+        modGain.gain.value = 1000;
+        mod.connect(modGain);
+        modGain.connect(osc.frequency);
+        
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(1000, this.ctx.currentTime);
+        filter.frequency.exponentialRampToValueAtTime(100, this.ctx.currentTime + 0.5);
+
+        gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.5);
+        
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.ctx.destination);
+        
+        osc.start();
+        mod.start();
+        osc.stop(this.ctx.currentTime + 0.5);
+        mod.stop(this.ctx.currentTime + 0.5);
+    }
+
+    playDash() {
+        if (!this.isInitialized || this.ctx.currentTime - (this.lastDashTime || 0) < 0.1) return;
+        this.lastDashTime = this.ctx.currentTime;
+        
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        const filter = this.ctx.createBiquadFilter();
+        
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(50, this.ctx.currentTime);
+        
+        filter.type = 'highpass';
+        filter.frequency.value = 500;
+        
+        gain.gain.setValueAtTime(0, this.ctx.currentTime);
+        gain.gain.linearRampToValueAtTime(0.1, this.ctx.currentTime + 0.05);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.2);
+        
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.ctx.destination);
+        
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.2);
+    }
+
+    playZeroShift() {
+        if (!this.isInitialized) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(1000, this.ctx.currentTime);
+        // 急激なピッチダウン (ドップラー効果的)
+        osc.frequency.exponentialRampToValueAtTime(50, this.ctx.currentTime + 0.2);
+        
+        gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.2);
+        
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.2);
+    }
+}
+
+
+/**
  * UCD-F: Zero-Allocation (固定長プール) の概念実装
  */
 class ObjectPool {
@@ -203,7 +476,16 @@ class Game {
         window.addEventListener('resize', () => this.resize());
 
         this.input = { x: 0, y: 0, fire: false, modeSwitch: false, dash: false, zeroShift: false, homing: false };
-        this.setupInputs();
+        
+        this.audio = new AudioSystem();
+
+        // Overlay interaction
+        const overlay = document.getElementById('start-overlay');
+        overlay.addEventListener('click', () => {
+            this.audio.init();
+            overlay.style.display = 'none';
+            this.setupInputs();
+        });
 
         // 質量変動型ABCモデルの定義
         this.modes = [
@@ -226,7 +508,7 @@ class Game {
         this.enemies = new ObjectPool(() => ({ active: false, id: 0, x: 0, y: 0, vx: 0, vy: 0, hp: 0, size: 0, color: '', locked: false }), 200);
         this.particles = new ObjectPool(() => ({ active: false, x: 0, y: 0, vx: 0, vy: 0, life: 0, maxLife: 0, color: '' }), 300);
 
-        // 新規：ホーミングレーザー用プール (軌跡保存用のFloat32Arrayを含むゼロアロケーション対応)
+        // 新規：ホーミングレーザー用プール
         this.homingLasers = new ObjectPool(() => ({
             active: false, x: 0, y: 0, vx: 0, vy: 0, target: null, targetId: 0,
             historyX: new Float32Array(15), historyY: new Float32Array(15), historyCount: 0
@@ -276,7 +558,7 @@ class Game {
         window.addEventListener('keydown', (e) => {
             if (keys.hasOwnProperty(e.code)) keys[e.code] = true;
             if (e.code === 'Space') this.input.fire = true;
-            if (e.code === 'KeyF') this.input.homing = true; // ホーミングキー
+            if (e.code === 'KeyF') this.input.homing = true;
             if (e.code === 'KeyE') this.input.dash = true;
             if (e.code === 'KeyQ') this.input.zeroShift = true;
             if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
@@ -345,7 +627,7 @@ class Game {
 
         bindBtn('btn-fire', 'fire');
         bindBtn('btn-dash', 'dash');
-        bindBtn('btn-lock', 'homing'); // ロックオンボタン
+        bindBtn('btn-lock', 'homing');
         bindBtn('btn-zero', 'zeroShift', true);
 
         const btnMode = document.getElementById('btn-mode');
@@ -390,6 +672,7 @@ class Game {
     }
 
     spawnExplosion(x, y, color) {
+        this.audio.playExplosion();
         for (let i = 0; i < 15; i++) {
             const p = this.particles.get();
             if (p) {
@@ -412,6 +695,8 @@ class Game {
 
         this.update(dt);
         this.draw();
+        
+        this.audio.updateBGM(currentTime);
 
         requestAnimationFrame(this.loop.bind(this));
     }
@@ -429,7 +714,7 @@ class Game {
         this.player.update(dt, this.input, this.modes[this.currentModeIndex]);
 
         // 通常弾の更新
-        if (this.input.fire && performance.now() - (this.lastFireTime || 0) > 80) {
+        if (this.input.fire && this.player.freezeTimer <= 0 && performance.now() - (this.lastFireTime || 0) > 80) {
             const bullet = this.bullets.get();
             if (bullet) {
                 bullet.x = this.player.x;
@@ -437,6 +722,7 @@ class Game {
                 bullet.vx = this.player.vx * 0.2;
                 bullet.vy = -1200;
                 this.lastFireTime = performance.now();
+                this.audio.playShoot();
             }
         }
 
@@ -446,32 +732,27 @@ class Game {
             if (b.y < -50 || b.x < -50 || b.x > this.canvas.width + 50) b.active = false;
         });
 
-        // --- ZMF Assist Controller: Pro-Nav (比例航法) によるホーミングレーザーの更新 ---
+        // --- ZMF Assist Controller: Pro-Nav (比例航法) ---
         this.homingLasers.forEachActive(l => {
-            // 軌跡の保存（リングバッファ）
             l.historyX[l.historyCount % 15] = l.x;
             l.historyY[l.historyCount % 15] = l.y;
             l.historyCount++;
 
-            const speed = 1400; // レーザーの基本速度
+            const speed = 1400; 
             
-            // ターゲットが生きていて、同一IDであるか確認
             if (l.target && l.target.active && l.target.id === l.targetId) {
                 const dx = l.target.x - l.x;
                 const dy = l.target.y - l.y;
                 const dist = Math.sqrt(dx * dx + dy * dy);
                 
-                // ターゲットへの理想速度ベクトル
                 const targetVx = (dx / dist) * speed;
                 const targetVy = (dy / dist) * speed;
 
-                // 旋回性能（曲がりやすさ）
                 const turnRate = 8.0; 
                 l.vx += (targetVx - l.vx) * turnRate * dt;
                 l.vy += (targetVy - l.vy) * turnRate * dt;
             }
 
-            // 現在の速度を正規化して速度を一定に保つ（ZMF: 有機的な加減速より軌道美を優先）
             const currentSpeed = Math.sqrt(l.vx * l.vx + l.vy * l.vy);
             if (currentSpeed > 0) {
                 l.vx = (l.vx / currentSpeed) * speed;
@@ -481,7 +762,6 @@ class Game {
             l.x += l.vx * dt;
             l.y += l.vy * dt;
 
-            // 画面外判定
             if (l.y < -100 || l.x < -100 || l.x > this.canvas.width + 100 || l.y > this.canvas.height + 100) {
                 l.active = false;
             }
@@ -491,20 +771,20 @@ class Game {
         if (Math.random() < 0.15) { 
             const enemy = this.enemies.get();
             if (enemy) {
-                enemy.id = ++this.enemyIdCounter; // ユニークID付与
+                enemy.id = ++this.enemyIdCounter; 
                 enemy.x = Math.random() * this.canvas.width;
                 enemy.y = -30;
                 enemy.vx = (Math.random() - 0.5) * 100;
                 enemy.vy = Math.random() * 200 + 150;
                 enemy.size = Math.random() * 10 + 10;
-                enemy.hp = Math.floor(enemy.size / 10) + 1; // 1〜3 HP
+                enemy.hp = Math.floor(enemy.size / 10) + 1; 
                 enemy.locked = false;
                 const colors = ['#f36', '#fa0', '#f0f', '#0f3'];
                 enemy.color = colors[Math.floor(Math.random() * colors.length)];
             }
         }
 
-        // 敵の更新と衝突判定
+        // 敵の衝突判定
         this.enemies.forEachActive(e => {
             e.x += e.vx * dt;
             e.y += e.vy * dt;
@@ -514,7 +794,7 @@ class Game {
                 if (e.locked) this.player.removeLock(e);
             }
 
-            // 通常弾との衝突
+            // 通常弾
             this.bullets.forEachActive(b => {
                 if (!e.active || !b.active) return;
                 const dx = e.x - b.x;
@@ -526,21 +806,21 @@ class Game {
                 }
             });
 
-            // ホーミングレーザーとの衝突
+            // ホーミングレーザー
             this.homingLasers.forEachActive(l => {
                 if (!e.active || !l.active) return;
                 const dx = e.x - l.x;
                 const dy = e.y - l.y;
                 if (dx * dx + dy * dy < (e.size + 15) * (e.size + 15)) {
-                    l.active = false; // レーザー消滅
-                    e.hp -= 2; // レーザーは高威力
-                    this.spawnExplosion(l.x, l.y, '#0ff'); // レーザー着弾の青い火花
+                    l.active = false; 
+                    e.hp -= 2; 
+                    this.spawnExplosion(l.x, l.y, '#0ff'); 
                     if (e.hp <= 0) this.destroyEnemy(e);
                 }
             });
 
-            // 自機との衝突
-            const isInvincible = this.player.isDashing || this.player.zeroShiftCooldown > 1.3;
+            // 自機
+            const isInvincible = this.player.isDashing || this.player.zeroShiftCooldown > 0 || this.player.freezeTimer > 0;
             if (e.active && !isInvincible) {
                 const dx = e.x - this.player.x;
                 const dy = e.y - this.player.y;
@@ -609,21 +889,28 @@ class Game {
             this.ctx.restore();
         });
 
-        // ロックオンサークルとレティクルの描画
+        // ロックオンサークルとレティクルの描画 (前方180度の半円形)
         if (this.player.lockRadius > 0) {
+            this.ctx.save();
+            this.ctx.translate(this.player.x, this.player.y);
+            this.ctx.rotate(this.player.roll);
+            
             this.ctx.strokeStyle = 'rgba(0, 255, 255, 0.4)';
+            this.ctx.fillStyle = 'rgba(0, 255, 255, 0.05)';
             this.ctx.lineWidth = 1;
             this.ctx.beginPath();
-            this.ctx.arc(this.player.x, this.player.y, this.player.lockRadius, 0, Math.PI * 2);
+            this.ctx.arc(0, 0, this.player.lockRadius, Math.PI, Math.PI * 2);
+            this.ctx.closePath(); 
+            this.ctx.fill();
             this.ctx.stroke();
+            this.ctx.restore();
 
-            // ロックオンされた敵にレティクルを描画
+            // レティクル
             this.player.lockedTargets.forEach(target => {
                 if (target && target.active) {
                     this.ctx.strokeStyle = '#0ff';
                     this.ctx.lineWidth = 2;
                     const s = target.size + 8;
-                    // 四隅のカッコを描く
                     this.ctx.beginPath();
                     this.ctx.moveTo(target.x - s, target.y - s + 5);
                     this.ctx.lineTo(target.x - s, target.y - s);
@@ -653,7 +940,7 @@ class Game {
             this.ctx.globalAlpha = 1.0;
         });
 
-        // ホーミングレーザーの描画（軌跡を描画）
+        // ホーミングレーザー
         this.homingLasers.forEachActive(l => {
             this.ctx.beginPath();
             let count = Math.min(l.historyCount, 15);
@@ -666,14 +953,12 @@ class Game {
             }
             this.ctx.lineTo(l.x, l.y);
             
-            // レーザーの軌跡（シアン）
             this.ctx.strokeStyle = '#0ff';
             this.ctx.lineWidth = 3;
             this.ctx.lineCap = 'round';
             this.ctx.lineJoin = 'round';
             this.ctx.stroke();
 
-            // レーザーの先端（白）
             this.ctx.fillStyle = '#fff';
             this.ctx.beginPath();
             this.ctx.arc(l.x, l.y, 4, 0, Math.PI * 2);
@@ -753,11 +1038,13 @@ class Player {
         
         this.zeroShiftCooldown = 0;
         this.isDashing = false;
+        
+        this.freezeTimer = 0;
 
         // マルチロック・レーザー用変数
         this.wasHoming = false;
         this.lockRadius = 0;
-        this.lockedTargets = []; // ゼロアロケーション維持のため要素を再利用
+        this.lockedTargets = []; 
     }
 
     removeLock(enemy) {
@@ -769,48 +1056,75 @@ class Player {
 
     update(dt, input, mode) {
         this.isDashing = input.dash;
+        
+        // ダッシュ音 (連続再生防止はAudioSystem内で処理)
+        if (this.isDashing && this.freezeTimer <= 0) {
+            this.game.audio.playDash();
+        }
 
         // --- マルチロック・レーザー (Homing System) ---
         if (input.homing) {
-            // ロックオンサークル拡大
-            this.lockRadius = Math.min(this.lockRadius + dt * 1500, 600);
+            this.lockRadius = Math.min(this.lockRadius + dt * 2500, 1000);
             
-            // サークル内の敵を捕捉 (最大12体)
+            const fx = Math.sin(this.roll);
+            const fy = -Math.cos(this.roll);
+
             this.game.enemies.forEachActive(e => {
-                if (!e.locked && this.lockedTargets.length < 12) {
+                if (!e.locked && this.lockedTargets.length < 24) {
                     const dx = e.x - this.x;
                     const dy = e.y - this.y;
-                    if (dx * dx + dy * dy < this.lockRadius * this.lockRadius) {
+                    
+                    const dot = dx * fx + dy * fy;
+                    
+                    if (dot >= 0 && (dx * dx + dy * dy < this.lockRadius * this.lockRadius)) {
                         e.locked = true;
                         this.lockedTargets.push(e);
+                        this.game.audio.playLockOn(); // ロック音
                     }
                 }
             });
         } else if (this.wasHoming) {
-            // キーを離した瞬間、ロックした敵にレーザーを発射
-            this.lockedTargets.forEach(target => {
-                if (target && target.active) {
-                    const laser = this.game.homingLasers.get();
-                    if (laser) {
-                        laser.x = this.x;
-                        laser.y = this.y - 20;
-                        // 発射直後は放射状にランダムに散らす（後にホーミングする）
-                        const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.5;
-                        const initialSpeed = 800;
-                        laser.vx = Math.cos(angle) * initialSpeed + this.vx * 0.5;
-                        laser.vy = Math.sin(angle) * initialSpeed + this.vy * 0.5;
-                        laser.target = target;
-                        laser.targetId = target.id;
-                        laser.historyCount = 0;
+            if (this.lockedTargets.length > 0) {
+                this.game.audio.playHomingShoot(); // ホーミング発射音
+                
+                this.lockedTargets.forEach(target => {
+                    if (target && target.active) {
+                        const laser = this.game.homingLasers.get();
+                        if (laser) {
+                            laser.x = this.x;
+                            laser.y = this.y - 20;
+                            const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.5;
+                            const initialSpeed = 800;
+                            laser.vx = Math.cos(angle) * initialSpeed + this.vx * 0.5;
+                            laser.vy = Math.sin(angle) * initialSpeed + this.vy * 0.5;
+                            laser.target = target;
+                            laser.targetId = target.id;
+                            laser.historyCount = 0;
+                        }
                     }
-                }
-                target.locked = false;
-            });
-            // 配列を空にする（新規割り当てを避ける）
+                    target.locked = false;
+                });
+                
+                this.freezeTimer = 0.3;
+                this.game.jerkIntensity = 1.0;
+                this.game.triggerSpeedLines(20);
+            }
+            
             this.lockedTargets.length = 0;
             this.lockRadius = 0;
         }
         this.wasHoming = input.homing;
+
+        // --- 硬直状態 (Freeze State) ---
+        if (this.freezeTimer > 0) {
+            this.freezeTimer -= dt;
+            this.vx = 0;
+            this.vy = 0;
+            input.x = 0;
+            input.y = 0;
+            input.dash = false;
+            input.zeroShift = false;
+        }
 
         // --- ゼロシフト (Zero Shift) ---
         if (this.zeroShiftCooldown > 0) {
@@ -819,6 +1133,8 @@ class Player {
 
         if (input.zeroShift) {
             if (this.zeroShiftCooldown <= 0 && (input.x !== 0 || input.y !== 0)) {
+                this.game.audio.playZeroShift(); // ゼロシフト音
+                
                 const shiftDist = 250;
                 for (let i = 0; i <= 5; i++) {
                     const step = i / 5;
@@ -837,7 +1153,7 @@ class Player {
                 this.game.jerkIntensity = 1.0;
                 this.game.triggerSpeedLines(40);
                 
-                this.zeroShiftCooldown = 1.5;
+                this.zeroShiftCooldown = 0.2;
             }
             input.zeroShift = false;
         }
@@ -853,7 +1169,7 @@ class Player {
         const jerkY = (this.ay - this.lastAy) / dt;
         const jerkMag = Math.sqrt(jerkX*jerkX + jerkY*jerkY);
         
-        if (jerkMag > 50000) { 
+        if (jerkMag > 50000 && this.freezeTimer <= 0) { 
             this.game.jerkIntensity = Math.min(1.0, this.game.jerkIntensity + 0.5);
             if (Math.random() > 0.5) this.game.triggerSpeedLines(8);
         }
@@ -898,7 +1214,7 @@ class Player {
             ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
             ctx.fillRect(-15, 25, 30, 3);
             ctx.fillStyle = 'rgba(0, 255, 255, 0.8)';
-            const ratio = 1.0 - (this.zeroShiftCooldown / 1.5);
+            const ratio = 1.0 - (this.zeroShiftCooldown / 0.2);
             ctx.fillRect(-15, 25, 30 * ratio, 3);
         }
 
