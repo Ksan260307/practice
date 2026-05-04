@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>High-Mobility Engine Demo</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #030508;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #ffffff;
+            touch-action: none; /* スクロール防止 */
+        }
+        canvas {
+            display: block;
+        }
+        /* オーバーレイUI全体 */
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            padding: 24px;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+        
+        /* 設定パネル（常に表示） */
+        .settings-panel {
+            position: absolute;
+            top: 24px;
+            right: 24px;
+            background: rgba(10, 15, 25, 0.6);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 16px;
+            pointer-events: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            z-index: 10;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        }
+        .setting-item {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .setting-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: #88aadd;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        /* スライダーのスタイル */
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 150px;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #00d4ff;
+            cursor: pointer;
+            margin-top: -6px;
+            box-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 2px;
+        }
+
+        /* 切り替え可能なメインUIグループ */
+        #main-ui-group {
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            flex-grow: 1;
+            transition: opacity 0.3s ease;
+        }
+
+        .hud-panel {
+            background: rgba(10, 15, 25, 0.6);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 16px;
+            width: 250px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        }
+        .parameter {
+            margin-bottom: 12px;
+        }
+        .parameter:last-child {
+            margin-bottom: 0;
+        }
+        .label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: #88aadd;
+            margin-bottom: 6px;
+            display: flex;
+            justify-content: space-between;
+        }
+        .bar-bg {
+            width: 100%;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+            overflow: hidden;
+            position: relative;
+        }
+        .bar-fill {
+            height: 100%;
+            width: 0%;
+            border-radius: 3px;
+            transition: width 0.1s linear, background-color 0.2s ease;
+        }
+        /* アクションボタン (U-TURN) */
+        .action-btn {
+            align-self: flex-end;
+            background: rgba(0, 212, 255, 0.15);
+            border: 1px solid rgba(0, 212, 255, 0.5);
+            color: #00d4ff;
+            padding: 16px 32px;
+            border-radius: 12px;
+            font-weight: bold;
+            font-size: 16px;
+            letter-spacing: 2px;
+            pointer-events: auto;
+            cursor: pointer;
+            backdrop-filter: blur(4px);
+            box-shadow: 0 0 15px rgba(0, 212, 255, 0.2);
+            transition: all 0.2s ease;
+            text-transform: uppercase;
+            margin-top: auto; /* 下部に押しやる */
+        }
+        .action-btn:active {
+            background: rgba(0, 212, 255, 0.4);
+            transform: scale(0.95);
+            box-shadow: 0 0 25px rgba(0, 212, 255, 0.5);
+        }
+        /* インジケーター */
+        #joystick-ring {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 150px;
+            height: 150px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        #joystick-knob {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 10px;
+            height: 10px;
+            background: #ffffff;
+            border-radius: 50%;
+            box-shadow: 0 0 10px #fff;
+        }
+        .instructions {
+            position: absolute;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.6);
+            padding: 12px 24px;
+            border-radius: 20px;
+            font-size: 13px;
+            letter-spacing: 1px;
+            color: #ccc;
+            text-align: center;
+            line-height: 1.6;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            pointer-events: none;
+        }
+        .highlight {
+            color: #00d4ff;
+            font-weight: bold;
+        }
+        /* 状態異常時の画面エフェクト */
+        #warning-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            box-shadow: inset 0 0 100px rgba(255, 0, 0, 0);
+            pointer-events: none;
+            transition: box-shadow 0.2s ease;
+        }
+    </style>
+</head>
+<body>
+    <div id="warning-overlay"></div>
+    
+    <div id="ui-layer">
+        <div class="settings-panel">
+            <div class="setting-item">
+                <div class="setting-label"><span>Camera Sensitivity</span><span id="sens-val">0.3x</span></div>
+                <input type="range" id="sensitivity-slider" min="0.1" max="0.5" step="0.1" value="0.3">
+            </div>
+            <div class="setting-item">
+                <label class="setting-label" style="cursor: pointer; justify-content: flex-start; gap: 8px;">
+                    <input type="checkbox" id="ui-toggle" checked style="cursor: pointer;">
+                    HUD Display
+                </label>
+            </div>
+        </div>
+
+        <div id="main-ui-group">
+            <div class="hud-panel">
+                <div class="parameter">
+                    <div class="label"><span>Speed</span><span id="val-speed">0%</span></div>
+                    <div class="bar-bg"><div id="bar-speed" class="bar-fill" style="background: #00d4ff;"></div></div>
+                </div>
+                <div class="parameter">
+                    <div class="label"><span>Energy</span><span id="val-energy">100%</span></div>
+                    <div class="bar-bg"><div id="bar-energy" class="bar-fill" style="background: #00ff88;"></div></div>
+                </div>
+                <div class="parameter">
+                    <div class="label"><span>Load</span><span id="val-load">0%</span></div>
+                    <div class="bar-bg"><div id="bar-load" class="bar-fill" style="background: #ff3366;"></div></div>
+                </div>
+            </div>
+            
+            <button id="loop-btn" class="action-btn">U-TURN</button>
+
+            <div class="instructions">
+                画面ドラッグ：操作 / <span class="highlight">ダブルタップ：ダッシュ</span><br>
+                <span class="highlight">左右小刻みスワイプ：バレルロール</span>
+            </div>
+        </div>
+        
+        <div id="joystick-ring"><div id="joystick-knob"></div></div>
+    </div>
+
+    <!-- Three.js (3D描画エンジン) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <script>
+        /**
+         * ==========================================
+         * テクスチャ生成ユーティリティ (Procedural Textures)
+         * ==========================================
+         */
+        
+        function createCyberTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+
+            ctx.fillStyle = '#05101a';
+            ctx.fillRect(0, 0, 512, 512);
+
+            ctx.strokeStyle = '#0066aa';
+            ctx.lineWidth = 2;
+            for (let i = 0; i <= 512; i += 32) {
+                ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 512); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(512, i); ctx.stroke();
+            }
+
+            ctx.fillStyle = '#00d4ff';
+            for (let i = 0; i < 40; i++) {
+                let x = Math.floor(Math.random() * 16) * 32;
+                let y = Math.floor(Math.random() * 16) * 32;
+                ctx.fillRect(x - 2, y - 2, 4, 4); 
+                if (Math.random() > 0.5) {
+                    ctx.fillRect(x, y, Math.random() * 64, 4);
+                } else {
+                    ctx.fillRect(x, y, 4, Math.random() * 64);
+                }
+            }
+
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.wrapS = THREE.RepeatWrapping;
+            texture.wrapT = THREE.RepeatWrapping;
+            texture.repeat.set(2, 2); 
+            return texture;
+        }
+
+        function createRockTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+
+            ctx.fillStyle = '#888888';
+            ctx.fillRect(0, 0, 512, 512);
+
+            for (let i = 0; i < 2000; i++) {
+                let x = Math.random() * 512;
+                let y = Math.random() * 512;
+                let r = Math.random() * 15;
+                let c = Math.floor(Math.random() * 60) + 100;
+                ctx.fillStyle = `rgb(${c}, ${c}, ${c})`;
+                
+                ctx.beginPath();
+                ctx.arc(x, y, r, 0, Math.PI * 2);
+                ctx.fill();
+
+                if (i % 50 === 0) {
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+                    ctx.beginPath();
+                    ctx.arc(x + 2, y + 2, r * 0.8, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.wrapS = THREE.RepeatWrapping;
+            texture.wrapT = THREE.RepeatWrapping;
+            return texture;
+        }
+
+        function createParticleTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64;
+            canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+            gradient.addColorStop(0, 'rgba(255,255,255,1)');
+            gradient.addColorStop(0.3, 'rgba(255,255,255,0.8)');
+            gradient.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, 64, 64);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        /**
+         * ==========================================
+         * パーティクルシステム (VFX Manager)
+         * ==========================================
+         */
+        class ParticleSystem {
+            constructor(scene, maxParticles, texture) {
+                this.maxParticles = maxParticles;
+                this.particles = [];
+                this.positions = new Float32Array(maxParticles * 3);
+                this.colors = new Float32Array(maxParticles * 3);
+
+                for (let i = 0; i < maxParticles; i++) {
+                    this.particles.push({ 
+                        active: false, 
+                        pos: new THREE.Vector3(), 
+                        vel: new THREE.Vector3(), 
+                        life: 0, maxLife: 1, 
+                        color: new THREE.Color() 
+                    });
+                    this.positions[i*3] = 99999;
+                }
+
+                this.geometry = new THREE.BufferGeometry();
+                this.geometry.setAttribute('position', new THREE.BufferAttribute(this.positions, 3));
+                this.geometry.setAttribute('color', new THREE.BufferAttribute(this.colors, 3));
+
+                this.material = new THREE.PointsMaterial({
+                    size: 1.2, 
+                    vertexColors: true,
+                    transparent: true,
+                    blending: THREE.AdditiveBlending, 
+                    depthWrite: false,
+                    map: texture
+                });
+
+                this.points = new THREE.Points(this.geometry, this.material);
+                scene.add(this.points);
+            }
+
+            spawn(pos, vel, life, color) {
+                for (let i = 0; i < this.maxParticles; i++) {
+                    if (!this.particles[i].active) {
+                        let p = this.particles[i];
+                        p.active = true;
+                        p.pos.copy(pos);
+                        p.vel.copy(vel);
+                        p.life = life;
+                        p.maxLife = life;
+                        p.color.copy(color);
+                        break;
+                    }
+                }
+            }
+
+            update(dt) {
+                for (let i = 0; i < this.maxParticles; i++) {
+                    let p = this.particles[i];
+                    if (p.active) {
+                        p.life -= dt;
+                        if (p.life <= 0) {
+                            p.active = false;
+                            this.positions[i*3] = 99999; 
+                        } else {
+                            p.pos.addScaledVector(p.vel, dt);
+                            p.vel.multiplyScalar(0.95); 
+                            
+                            this.positions[i*3] = p.pos.x;
+                            this.positions[i*3+1] = p.pos.y;
+                            this.positions[i*3+2] = p.pos.z;
+                            
+                            let ratio = p.life / p.maxLife;
+                            this.colors[i*3] = p.color.r * ratio;
+                            this.colors[i*3+1] = p.color.g * ratio;
+                            this.colors[i*3+2] = p.color.b * ratio;
+                        }
+                    }
+                }
+                this.geometry.attributes.position.needsUpdate = true;
+                this.geometry.attributes.color.needsUpdate = true;
+            }
+        }
+
+        /**
+         * ==========================================
+         * Perceptual Dynamics Engine (PDE) Core Logic
+         * ==========================================
+         */
+        class PerceptualDynamicsEngine {
+            constructor() {
+                this.energy = 1.0;
+                this.entropy = 0.0;
+                this.sensitivity = 0.3;
+
+                this.position = new THREE.Vector3(0, 0, 0);
+                this.velocity = new THREE.Vector3(0, 0, -10);
+                this.targetVelocity = new THREE.Vector3(0, 0, -10);
+                
+                this.baseRotation = new THREE.Quaternion();
+                this.rotation = new THREE.Quaternion();
+
+                this.vLevel = 0.0;
+                this.inputVector = new THREE.Vector2(0, 0);
+                
+                this.isRolling = false;
+                this.rollTime = 0.0;
+                this.rollDuration = 0.5;
+                this.rollDir = 1;
+
+                this.isDashing = false;
+                this.dashTime = 0.0;
+                this.dashDuration = 1.0;
+
+                this.isUTurning = false;
+                this.uTurnTime = 0.0;
+                this.uTurnDuration = 1.2;
+                this.uTurnStartDir = new THREE.Vector3();
+                this.uTurnAxis = new THREE.Vector3();
+                this.uTurnStartQuat = new THREE.Quaternion();
+                this.uTurnStartSpeed = 0;
+            }
+
+            triggerRoll(dir) {
+                if (this.isRolling || this.isUTurning) return;
+                this.isRolling = true;
+                this.rollTime = 0.0;
+                this.rollDir = dir || (this.inputVector.x < 0 ? 1 : -1);
+            }
+
+            triggerDash() {
+                if (this.isDashing || this.isUTurning || this.energy < 0.2) return;
+                this.isDashing = true;
+                this.dashTime = 0.0;
+                this.energy -= 0.2;
+            }
+
+            triggerUTurn() {
+                if (this.isRolling || this.isUTurning) return;
+                this.isUTurning = true;
+                this.uTurnTime = 0.0;
+                
+                this.uTurnStartDir.copy(this.velocity).normalize();
+                if (this.uTurnStartDir.lengthSq() < 0.1) this.uTurnStartDir.set(0, 0, -1);
+                
+                this.uTurnAxis.copy(this.uTurnStartDir).cross(new THREE.Vector3(0, 1, 0)).normalize();
+                if (this.uTurnAxis.lengthSq() < 0.01) this.uTurnAxis.set(1, 0, 0); 
+                
+                this.uTurnStartQuat.copy(this.baseRotation);
+                this.uTurnStartSpeed = Math.max(15.0, this.velocity.length());
+            }
+
+            update(dt, obstacles, onSlip) {
+                const baseSpeed = 15.0;
+                const maxBoost = 100.0;
+                let bypassLookAt = false;
+
+                if (this.isUTurning) {
+                    this.uTurnTime += dt;
+                    let progress = this.uTurnTime / this.uTurnDuration;
+                    
+                    if (progress >= 1.0) {
+                        this.isUTurning = false;
+                        progress = 1.0;
+                    }
+
+                    let easeProgress = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+                    let currentAngle = easeProgress * Math.PI;
+                    let currentDir = this.uTurnStartDir.clone().applyAxisAngle(this.uTurnAxis, currentAngle);
+                    
+                    this.velocity.copy(currentDir).multiplyScalar(this.uTurnStartSpeed * 1.5); 
+                    this.targetVelocity.copy(this.velocity);
+
+                    let pitchQuat = new THREE.Quaternion().setFromAxisAngle(this.uTurnAxis, currentAngle);
+                    let rollAngle = 0;
+                    if (progress > 0.5) {
+                        let rollProgress = (progress - 0.5) * 2.0; 
+                        let easeRoll = rollProgress < 0.5 ? 2 * rollProgress * rollProgress : 1 - Math.pow(-2 * rollProgress + 2, 2) / 2;
+                        rollAngle = easeRoll * Math.PI;
+                    }
+                    let forwardDir = currentDir.clone().normalize();
+                    let rollQuat = new THREE.Quaternion().setFromAxisAngle(forwardDir, rollAngle);
+                    
+                    this.baseRotation.copy(this.uTurnStartQuat).multiply(pitchQuat).multiply(rollQuat);
+                    bypassLookAt = true; 
+                } 
+                else {
+                    let intentMag = this.inputVector.length();
+                    let boostRatio = Math.pow(Math.min(intentMag, 1.0), 1.5); 
+                    if (this.energy < 0.1) boostRatio *= (this.energy * 10);
+                    
+                    let currentTargetSpeed = baseSpeed + (maxBoost * boostRatio);
+
+                    if (this.isDashing) {
+                        this.dashTime += dt;
+                        if (this.dashTime >= this.dashDuration) {
+                            this.isDashing = false;
+                        } else {
+                            let progress = this.dashTime / this.dashDuration;
+                            currentTargetSpeed += maxBoost * 1.5 * Math.pow(1.0 - progress, 2);
+                        }
+                    }
+
+                    if (this.isRolling) {
+                        let progress = this.rollTime / this.rollDuration;
+                        currentTargetSpeed += (maxBoost * 0.8) * Math.sin(progress * Math.PI);
+                    }
+
+                    let currentForward = this.velocity.clone().setY(0).normalize();
+                    if (currentForward.lengthSq() < 0.1) {
+                        let m = new THREE.Matrix4().makeRotationFromQuaternion(this.baseRotation);
+                        currentForward.set(0, 0, -1).applyMatrix4(m).setY(0).normalize();
+                        if (currentForward.lengthSq() < 0.1) currentForward.set(0, 0, -1);
+                    }
+                    
+                    let currentRight = currentForward.clone().cross(new THREE.Vector3(0, 1, 0)).normalize();
+                    let currentUp = new THREE.Vector3(0, 1, 0);
+
+                    let targetDir = currentForward.clone();
+                    targetDir.add(currentRight.clone().multiplyScalar(this.inputVector.x * 2.5 * this.sensitivity));
+                    targetDir.add(currentUp.clone().multiplyScalar(this.inputVector.y * 2.5 * this.sensitivity));
+                    targetDir.normalize();
+                    
+                    this.targetVelocity.copy(targetDir).multiplyScalar(currentTargetSpeed);
+
+                    const agility = 4.0 * Math.max(1.0, this.sensitivity * 0.8);
+                    this.velocity.lerp(this.targetVelocity, dt * agility);
+                }
+
+                if (obstacles && obstacles.length > 0) {
+                    for (let ast of obstacles) {
+                        let diff = this.position.clone().sub(ast.position);
+                        let distSq = diff.lengthSq();
+                        let threshold = ast.geometry.parameters.radius + 1.5;
+                        let evasionRange = threshold + Math.min(threshold * 1.5, 40);
+                        
+                        if (distSq < evasionRange * evasionRange) {
+                            let dist = Math.sqrt(distSq);
+                            let normal = diff.normalize();
+                            let approachSpeed = -this.velocity.dot(normal);
+                            
+                            // ★ 1. 激突寸前での自動宙返り回避 (Auto U-Turn)
+                            if (dist < threshold * 2.5 && !this.isUTurning && approachSpeed > baseSpeed * 0.5) {
+                                let forward = this.velocity.clone().normalize();
+                                let toAst = diff.clone().multiplyScalar(-1).normalize();
+                                if (forward.dot(toAst) > 0.75) { // かなり正面から衝突しそうな場合
+                                    this.triggerUTurn();
+                                    if (onSlip) onSlip(this.position.clone(), normal, 2.0, true);
+                                }
+                            }
+                            
+                            // ★ 2. 強制的な位置補正（突き抜け防止）
+                            if (dist < threshold) {
+                                let penetration = threshold - dist;
+                                this.position.add(normal.clone().multiplyScalar(penetration)); // めり込みを押し出す
+                                
+                                let vDotN = this.velocity.dot(normal);
+                                if (vDotN < 0) {
+                                    // 障害物方向の速度を反射させる
+                                    this.velocity.sub(normal.clone().multiplyScalar(vDotN * 1.5)); 
+                                }
+                            } 
+                            // ★ 3. 従来の滑走（Slip）による軌道修正
+                            else if (approachSpeed > 0) {
+                                let force = Math.pow(1.0 - (dist - threshold) / (evasionRange - threshold), 2.0);
+                                let slipVector = normal.multiplyScalar(approachSpeed * force * 1.8);
+                                this.velocity.add(slipVector);
+                                
+                                let isAction = this.isRolling || this.isUTurning || this.isDashing;
+                                this.entropy += dt * (isAction ? 0.05 : 0.5) * force;
+                                
+                                if (onSlip && force > 0.2 && !this.isUTurning) {
+                                    let slipPos = this.position.clone().add(diff.normalize().multiplyScalar(-threshold));
+                                    onSlip(slipPos, normal, force, false);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                this.position.addScaledVector(this.velocity, dt);
+
+                if (!bypassLookAt && this.velocity.lengthSq() > 0.1) {
+                    let lookAtPos = this.position.clone().add(this.velocity);
+                    let mat = new THREE.Matrix4().lookAt(this.position, lookAtPos, new THREE.Vector3(0, 1, 0));
+                    let targetBaseQuat = new THREE.Quaternion().setFromRotationMatrix(mat);
+                    this.baseRotation.slerp(targetBaseQuat, dt * 6.0);
+                }
+
+                let rollAngle = -this.inputVector.x * Math.PI * 0.4 * this.sensitivity;
+                
+                if (this.isRolling) {
+                    this.rollTime += dt;
+                    if (this.rollTime >= this.rollDuration) {
+                        this.isRolling = false;
+                        this.rollTime = 0.0;
+                    } else {
+                        let progress = this.rollTime / this.rollDuration;
+                        let easeProgress = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+                        rollAngle += easeProgress * Math.PI * 2 * this.rollDir;
+                    }
+                }
+
+                let finalRollQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), rollAngle);
+                this.rotation.copy(this.baseRotation).multiply(finalRollQuat);
+
+                let currentSpeed = this.velocity.length();
+                this.vLevel = Math.max(0, Math.min((currentSpeed - baseSpeed) / maxBoost, 1.0));
+
+                if (this.vLevel > 0.2) {
+                    this.entropy += dt * 0.05 * this.vLevel;
+                } else {
+                    this.entropy -= dt * 0.15;
+                }
+
+                this.energy += dt * 0.05;
+
+                this.energy = Math.max(0, Math.min(this.energy, 1.0));
+                this.entropy = Math.max(0, Math.min(this.entropy, 1.0));
+            }
+        }
+
+        /**
+         * ==========================================
+         * Rendering & Interaction
+         * ==========================================
+         */
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x030508, 0.003);
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        document.body.appendChild(renderer.domElement);
+
+        const pde = new PerceptualDynamicsEngine();
+
+        // エフェクトマネージャーの初期化
+        const particleTex = createParticleTexture();
+        const vfxParticles = new ParticleSystem(scene, 2000, particleTex);
+
+        // カメラシェイク用変数
+        let cameraShake = 0.0;
+
+        // UI連携
+        const sensSlider = document.getElementById('sensitivity-slider');
+        const sensVal = document.getElementById('sens-val');
+        sensSlider.addEventListener('input', (e) => {
+            pde.sensitivity = parseFloat(e.target.value);
+            sensVal.innerText = pde.sensitivity.toFixed(1) + 'x';
+        });
+
+        const uiToggle = document.getElementById('ui-toggle');
+        const mainUiGroup = document.getElementById('main-ui-group');
+        uiToggle.addEventListener('change', (e) => {
+            const isVisible = e.target.checked;
+            mainUiGroup.style.opacity = isVisible ? '1' : '0';
+            mainUiGroup.style.pointerEvents = isVisible ? 'auto' : 'none';
+        });
+
+        const shipTexture = createCyberTexture();
+        const asteroidTexture = createRockTexture();
+
+        // ==========================================
+        // 自機 (Player Ship) の生成
+        // ==========================================
+        const ship = new THREE.Group();
+        const shipMat = new THREE.MeshStandardMaterial({ 
+            map: shipTexture,           
+            color: 0x88bbff,            
+            emissiveMap: shipTexture,   
+            emissive: 0x00aaff,
+            emissiveIntensity: 0.8,
+            roughness: 0.2,             
+            metalness: 0.8,             
+            wireframe: false
+        });
+
+        const bodyGeo = new THREE.ConeGeometry(0.8, 3, 4);
+        bodyGeo.rotateX(-Math.PI / 2); // -Z(機首) を尖らせる
+        const body = new THREE.Mesh(bodyGeo, shipMat);
+        ship.add(body);
+
+        const wingGeo = new THREE.ConeGeometry(2.4, 1.5, 3);
+        wingGeo.rotateX(-Math.PI / 2);
+        wingGeo.scale(1.0, 0.05, 1.0);
+        const wing = new THREE.Mesh(wingGeo, shipMat);
+        wing.position.set(0, -0.2, 0.6);
+        ship.add(wing);
+
+        const finGeo = new THREE.ConeGeometry(0.6, 1.0, 3);
+        finGeo.rotateX(-Math.PI / 2);
+        finGeo.scale(0.05, 1.0, 1.0);
+        const fin = new THREE.Mesh(finGeo, shipMat);
+        fin.position.set(0, 0.5, 1.0);
+        ship.add(fin);
+
+        scene.add(ship);
+
+        // 障害物 (Asteroids) の生成
+        const asteroids = [];
+        const astGeo = new THREE.IcosahedronGeometry(1, 1);
+        const astMat = new THREE.MeshStandardMaterial({ 
+            map: asteroidTexture, 
+            color: 0xaaaaaa, 
+            roughness: 0.8, 
+            metalness: 0.2,
+            wireframe: false 
+        });
+        const ASTEROID_COUNT = 250;
+        const SPAWN_RANGE = 400; 
+
+        for (let i = 0; i < ASTEROID_COUNT; i++) {
+            let ast = new THREE.Mesh(astGeo, astMat.clone());
+            
+            // ★ スケールのランダム分布（極小から惑星級まで）
+            let rand = Math.random();
+            let scale;
+            if (rand < 0.02) {
+                // 2% 惑星級
+                scale = 60 + Math.random() * 80; // 60 ~ 140
+            } else if (rand < 0.1) {
+                // 8% 巨大
+                scale = 10 + Math.random() * 20; // 10 ~ 30
+            } else if (rand < 0.6) {
+                // 50% 中くらい
+                scale = 2 + Math.random() * 6;   // 2 ~ 8
+            } else {
+                // 40% 機体より小さい
+                scale = 0.5 + Math.random() * 1.0; // 0.5 ~ 1.5
+            }
+
+            ast.scale.set(scale, scale, scale);
+            ast.geometry.parameters = { radius: scale };
+            
+            ast.position.set(
+                (Math.random() - 0.5) * SPAWN_RANGE * 2,
+                (Math.random() - 0.5) * SPAWN_RANGE * 2,
+                (Math.random() - 0.5) * SPAWN_RANGE * 2
+            );
+            
+            ast.userData = {
+                rotAxis: new THREE.Vector3(Math.random(), Math.random(), Math.random()).normalize(),
+                // 大きいものほどゆっくり自転する
+                rotSpeed: (Math.random() * 0.5 + 0.1) / Math.sqrt(scale)
+            };
+            
+            scene.add(ast);
+            asteroids.push(ast);
+        }
+
+        // 星屑 (Starfield)
+        const starGeo = new THREE.BufferGeometry();
+        const STAR_COUNT = 2000;
+        const starPos = new Float32Array(STAR_COUNT * 3);
+        const STAR_RANGE = 400;
+        for(let i=0; i < STAR_COUNT * 3; i++) {
+            starPos[i] = (Math.random() - 0.5) * STAR_RANGE * 2;
+        }
+        starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+        const starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.5, transparent: true, opacity: 0.6 });
+        const stars = new THREE.Points(starGeo, starMat);
+        scene.add(stars);
+
+        // --- 光源 ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
+        scene.add(ambientLight);
+        
+        const dirLight = new THREE.DirectionalLight(0xffddaa, 1.0);
+        dirLight.position.set(100, 200, 50);
+        scene.add(dirLight);
+
+        const backLight = new THREE.DirectionalLight(0x4466ff, 0.6);
+        backLight.position.set(-100, -100, -100);
+        scene.add(backLight);
+
+
+        // --- 入力ハンドリング ---
+        let isDragging = false;
+        let startPos = { x: 0, y: 0 };
+        let lastCurrentX = 0;
+        let lastTapTime = 0;
+        
+        let swipeDir = 0; 
+        let turnCount = 0;
+        let lastTurnTime = 0;
+        
+        const joystickRing = document.getElementById('joystick-ring');
+        const joystickKnob = document.getElementById('joystick-knob');
+        const loopBtn = document.getElementById('loop-btn');
+
+        loopBtn.addEventListener('pointerdown', (e) => {
+            e.stopPropagation(); 
+            pde.triggerUTurn();
+            cameraShake = 2.0; 
+        });
+
+        function onPointerDown(e) {
+            if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' || e.target.closest('.settings-panel')) return;
+
+            let currentTime = Date.now();
+            if (currentTime - lastTapTime < 300) {
+                pde.triggerDash();
+                cameraShake = 1.5; 
+            }
+            lastTapTime = currentTime;
+
+            isDragging = true;
+            startPos.x = e.clientX;
+            startPos.y = e.clientY;
+            lastCurrentX = e.clientX;
+            
+            swipeDir = 0;
+            turnCount = 0;
+            
+            joystickRing.style.opacity = '1';
+            joystickRing.style.left = startPos.x + 'px';
+            joystickRing.style.top = startPos.y + 'px';
+            joystickKnob.style.transform = `translate(-50%, -50%)`;
+        }
+
+        function onPointerMove(e) {
+            if (!isDragging) return;
+            
+            let currentX = e.clientX;
+            let deltaX = currentX - lastCurrentX;
+            
+            if (Math.abs(deltaX) > 8) { 
+                let newDir = Math.sign(deltaX);
+                if (swipeDir !== 0 && swipeDir !== newDir) {
+                    let now = Date.now();
+                    if (now - lastTurnTime < 400) {
+                        turnCount++;
+                    } else {
+                        turnCount = 1; 
+                    }
+                    lastTurnTime = now;
+                    
+                    if (turnCount >= 2) { 
+                        pde.triggerRoll(newDir);
+                        cameraShake = 0.8; 
+                        turnCount = 0; 
+                    }
+                }
+                swipeDir = newDir;
+            }
+            lastCurrentX = currentX;
+
+            let dx = e.clientX - startPos.x;
+            let dy = e.clientY - startPos.y;
+            
+            const maxDrag = 100; 
+            let dist = Math.sqrt(dx*dx + dy*dy);
+            if (dist > maxDrag) {
+                dx = (dx / dist) * maxDrag;
+                dy = (dy / dist) * maxDrag;
+            }
+            joystickKnob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+
+            pde.inputVector.set(dx / maxDrag, -dy / maxDrag);
+        }
+
+        function onPointerUp() {
+            isDragging = false;
+            pde.inputVector.set(0, 0);
+            joystickRing.style.opacity = '0';
+        }
+
+        window.addEventListener('pointerdown', onPointerDown);
+        window.addEventListener('pointermove', onPointerMove);
+        window.addEventListener('pointerup', onPointerUp);
+        window.addEventListener('pointercancel', onPointerUp);
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // ★ 引数にisAutoEvadeを追加
+        const onSlipCallback = (pos, normal, force, isAutoEvade) => {
+            if (isAutoEvade) {
+                cameraShake = 2.5; // 自動回避時にカメラを強く揺らす
+            }
+            let count = Math.min(15, Math.floor(force * 8));
+            let sparkColor = new THREE.Color(0xffbb00);
+            for(let i=0; i<count; i++) {
+                let vel = normal.clone().multiplyScalar(10 + Math.random()*20);
+                vel.add(new THREE.Vector3((Math.random()-0.5)*15, (Math.random()-0.5)*15, (Math.random()-0.5)*15));
+                vfxParticles.spawn(pos, vel, 0.2 + Math.random()*0.3, sparkColor);
+            }
+        };
+
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            let dt = clock.getDelta();
+            if (dt > 0.1) dt = 0.1; 
+
+            pde.update(dt, asteroids, onSlipCallback);
+
+            // 描画同期
+            ship.position.copy(pde.position);
+            ship.quaternion.copy(pde.rotation);
+
+            let tailPos = pde.position.clone().add(new THREE.Vector3(0, -0.1, 1.7).applyQuaternion(pde.rotation));
+            let thrustColor = new THREE.Color(0x00d4ff);
+            if (pde.isDashing) thrustColor.setHex(0xffaa00);
+            if (pde.isRolling || pde.isUTurning) thrustColor.setHex(0xffffff);
+
+            let spawnCount = pde.isDashing ? 5 : 2;
+            for(let i=0; i<spawnCount; i++) {
+                let offset = new THREE.Vector3((Math.random()-0.5)*0.4, (Math.random()-0.5)*0.4, 0).applyQuaternion(pde.rotation);
+                let vel = pde.velocity.clone().multiplyScalar(-0.3).add(new THREE.Vector3((Math.random()-0.5)*1, (Math.random()-0.5)*1, (Math.random()-0.5)*1));
+                vfxParticles.spawn(tailPos.clone().add(offset), vel, 0.4 + Math.random()*0.3, thrustColor);
+            }
+
+            vfxParticles.update(dt);
+
+            let v = pde.vLevel;
+            let fovMultiplier = pde.isDashing ? 1.5 : 1.0;
+            let targetFov = 60 + (v * 45 * fovMultiplier);
+            camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, dt * 4.0);
+            camera.updateProjectionMatrix();
+
+            let hue = 0.55 + (v * 0.35);
+            
+            if (pde.isDashing) {
+                shipMat.emissiveIntensity = 3.0;
+                shipMat.emissive.setHSL(0.1, 1.0, 0.8);
+                ship.scale.set(0.6, 0.6, 1.8);
+            } else if (pde.isRolling || pde.isUTurning) {
+                shipMat.emissiveIntensity = 2.0;
+                shipMat.emissive.setHSL(0.5, 1.0, 0.8);
+                ship.scale.set(1.2, 1.2, 1.2);
+            } else {
+                shipMat.emissiveIntensity = 0.8;
+                shipMat.emissive.setHSL(hue, 1.0, 0.5);
+                ship.scale.lerp(new THREE.Vector3(1, 1, 1), dt * 5.0);
+            }
+
+            stars.scale.z = 1.0 + (v * (pde.isDashing ? 30.0 : 15.0));
+            if (pde.velocity.lengthSq() > 0.1) {
+                let mat = new THREE.Matrix4().lookAt(new THREE.Vector3(0,0,0), pde.velocity, new THREE.Vector3(0,1,0));
+                stars.quaternion.setFromRotationMatrix(mat);
+            }
+            
+            // --- カメラのアンカーシステムとシェイク ---
+            let moveDir = pde.velocity.clone().normalize();
+            if (moveDir.lengthSq() === 0) moveDir.set(0, 0, -1);
+            
+            let cameraOffset = moveDir.clone().multiplyScalar(-12).add(new THREE.Vector3(0, 4, 0));
+            let targetCameraPos = pde.position.clone().add(cameraOffset);
+
+            cameraShake *= 0.85; 
+            if (cameraShake > 0.01) {
+                targetCameraPos.add(new THREE.Vector3(
+                    (Math.random()-0.5)*cameraShake, 
+                    (Math.random()-0.5)*cameraShake, 
+                    (Math.random()-0.5)*cameraShake
+                ));
+            }
+            
+            camera.position.lerp(targetCameraPos, dt * 5.0);
+            camera.up.set(0, 1, 0); 
+            camera.lookAt(pde.position.clone().add(moveDir.multiplyScalar(20)));
+
+            // --- 無限空間ループ処理 ---
+            asteroids.forEach(ast => {
+                ast.rotateOnAxis(ast.userData.rotAxis, ast.userData.rotSpeed * dt);
+                
+                ast.material.color.setHSL(0.6, 0.2, 1.0 - (pde.entropy * 0.4)); 
+                if(pde.entropy > 0.3) {
+                    ast.material.color.lerp(new THREE.Color(0xff3333), (pde.entropy - 0.3));
+                }
+
+                let diffX = ast.position.x - pde.position.x;
+                let diffY = ast.position.y - pde.position.y;
+                let diffZ = ast.position.z - pde.position.z;
+
+                if (diffX > SPAWN_RANGE) ast.position.x -= SPAWN_RANGE * 2;
+                if (diffX < -SPAWN_RANGE) ast.position.x += SPAWN_RANGE * 2;
+                if (diffY > SPAWN_RANGE) ast.position.y -= SPAWN_RANGE * 2;
+                if (diffY < -SPAWN_RANGE) ast.position.y += SPAWN_RANGE * 2;
+                if (diffZ > SPAWN_RANGE) ast.position.z -= SPAWN_RANGE * 2;
+                if (diffZ < -SPAWN_RANGE) ast.position.z += SPAWN_RANGE * 2;
+            });
+
+            const positions = starGeo.attributes.position.array;
+            for(let i=0; i<STAR_COUNT; i++) {
+                let px = positions[i*3];
+                let py = positions[i*3+1];
+                let pz = positions[i*3+2];
+
+                if (px - pde.position.x > STAR_RANGE) positions[i*3] -= STAR_RANGE * 2;
+                if (px - pde.position.x < -STAR_RANGE) positions[i*3] += STAR_RANGE * 2;
+                if (py - pde.position.y > STAR_RANGE) positions[i*3+1] -= STAR_RANGE * 2;
+                if (py - pde.position.y < -STAR_RANGE) positions[i*3+1] += STAR_RANGE * 2;
+                if (pz - pde.position.z > STAR_RANGE) positions[i*3+2] -= STAR_RANGE * 2;
+                if (pz - pde.position.z < -STAR_RANGE) positions[i*3+2] += STAR_RANGE * 2;
+            }
+            starGeo.attributes.position.needsUpdate = true;
+
+            // UI更新
+            document.getElementById('bar-speed').style.width = `${v * 100}%`;
+            document.getElementById('val-speed').innerText = `${Math.floor(v * 100)}%`;
+            document.getElementById('bar-energy').style.width = `${pde.energy * 100}%`;
+            document.getElementById('val-energy').innerText = `${Math.floor(pde.energy * 100)}%`;
+            document.getElementById('bar-energy').style.background = pde.energy < 0.3 ? '#ffaa00' : '#00ff88';
+            document.getElementById('bar-load').style.width = `${pde.entropy * 100}%`;
+            document.getElementById('val-load').innerText = `${Math.floor(pde.entropy * 100)}%`;
+
+            if (pde.entropy > 0.5) {
+                let intensity = (pde.entropy - 0.5) * 2;
+                document.getElementById('warning-overlay').style.boxShadow = `inset 0 0 ${100 * intensity}px rgba(255, 0, 0, ${intensity * 0.5})`;
+            } else {
+                document.getElementById('warning-overlay').style.boxShadow = `inset 0 0 0px rgba(255, 0, 0, 0)`;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+    </script>
+</body>
+</html>
