@@ -1,0 +1,1562 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>レトロピコピコ・シーケンサー</title>
+    <!-- レトロなドット絵風フォントを読み込み -->
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=DotGothic16&display=swap" rel="stylesheet">
+    <style>
+        /* UIはユーザーフレンドリーなレトロゲーム風（ゲームボーイ風カラーパレット） */
+        :root {
+            --gb-darkest: #0f380f;
+            --gb-dark: #306230;
+            --gb-light: #8bac0f;
+            --gb-lightest: #9bbc0f;
+
+            /* パートごとの色定義 */
+            --color-melody: #0f380f; /* 濃い緑（矩形波） */
+            --color-bass: #1f3b5a;   /* 濃い青（三角波） */
+            --color-rhythm: #5a1f2b; /* 濃い赤（ノイズ） */
+            --color-sub: #5a4b1f;    /* 濃い茶（ノコギリ波） */
+        }
+
+        body {
+            background-color: var(--gb-darkest);
+            color: var(--gb-lightest);
+            font-family: 'DotGothic16', sans-serif;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1 {
+            font-family: 'Press Start 2P', 'DotGothic16', cursive;
+            text-align: center;
+            font-size: 24px;
+            margin-bottom: 20px;
+            text-shadow: 2px 2px var(--gb-dark);
+        }
+
+        .container {
+            background-color: var(--gb-dark);
+            padding: 20px;
+            border-radius: 8px;
+            border: 4px solid var(--gb-light);
+            box-shadow: 0 0 15px rgba(155, 188, 15, 0.5);
+            max-width: 100%;
+            overflow-x: auto;
+        }
+
+        /* タブメニュー */
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            justify-content: center;
+        }
+        
+        .tab-btn {
+            font-size: 18px;
+            opacity: 0.6;
+            border-color: var(--gb-darkest);
+        }
+        
+        .tab-btn.active {
+            opacity: 1;
+            background-color: var(--gb-lightest);
+            color: var(--gb-darkest);
+            border-color: var(--gb-lightest);
+            box-shadow: 0 0 10px rgba(155, 188, 15, 0.5);
+        }
+
+        /* ツールバー（操作パネル） */
+        .toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin-bottom: 20px;
+            justify-content: center;
+            align-items: center;
+            background-color: var(--gb-lightest);
+            padding: 10px;
+            border-radius: 4px;
+            color: var(--gb-darkest);
+        }
+
+        button, select {
+            font-family: 'DotGothic16', sans-serif;
+            background-color: var(--gb-darkest);
+            color: var(--gb-lightest);
+            border: 2px solid var(--gb-dark);
+            padding: 8px 16px;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        button:hover, select:hover {
+            background-color: var(--gb-light);
+            color: var(--gb-darkest);
+            border-color: var(--gb-darkest);
+        }
+
+        button:active {
+            transform: scale(0.95);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-weight: bold;
+        }
+
+        input[type="range"] {
+            accent-color: var(--gb-darkest);
+            cursor: pointer;
+        }
+        
+        select {
+            padding: 6px 10px;
+        }
+
+        /* パート選択の文字色変更 */
+        #partSelect option[value="0"] { color: var(--color-melody); font-weight: bold; }
+        #partSelect option[value="1"] { color: var(--color-bass); font-weight: bold; }
+        #partSelect option[value="2"] { color: var(--color-rhythm); font-weight: bold; }
+        #partSelect option[value="3"] { color: var(--color-sub); font-weight: bold; }
+
+        /* お気に入りパレット */
+        .palette {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 15px;
+            padding: 10px;
+            background-color: var(--gb-darkest);
+            border: 2px solid var(--gb-light);
+            border-radius: 4px;
+            min-height: 40px;
+            align-items: center;
+        }
+        
+        .palette-label {
+            font-size: 14px;
+            color: var(--gb-lightest);
+        }
+
+        .palette-btn {
+            font-weight: bold;
+            border: 2px solid transparent;
+        }
+
+        /* メインのキャンバス */
+        .canvas-container {
+            position: relative;
+            background-color: var(--gb-lightest);
+            border: 4px solid var(--gb-darkest);
+            cursor: crosshair;
+            /* スクロール可能にする */
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        canvas {
+            display: block;
+            touch-action: none;
+        }
+
+        .instructions {
+            margin-top: 20px;
+            text-align: center;
+            font-size: 14px;
+            line-height: 1.6;
+            max-width: 800px;
+        }
+
+        .separator {
+            color: var(--gb-dark);
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>ピコピコ音楽エディタ</h1>
+
+    <div class="tabs">
+        <button id="btnTabPhrase" class="tab-btn active">🎵 フレーズ作成</button>
+        <button id="btnTabSong" class="tab-btn">🧩 曲を組み立てる</button>
+    </div>
+
+    <div class="container">
+        
+        <!-- ============================== -->
+        <!-- タブ1: フレーズ作成画面          -->
+        <!-- ============================== -->
+        <div id="tab-phrase">
+            <div class="toolbar">
+                <button id="btnPlay" title="再生 / 停止">▶ 再生</button>
+                
+                <div class="control-group">
+                    <label for="bpmSlider">テンポ:</label>
+                    <input type="range" id="bpmSlider" min="60" max="240" value="120">
+                    <span id="bpmDisplay">120</span>
+                </div>
+
+                <div class="control-group">
+                    <label for="timeSigSelect">拍子:</label>
+                    <select id="timeSigSelect">
+                        <option value="2">2/4拍子</option>
+                        <option value="3">3/4拍子</option>
+                        <option value="4" selected>4/4拍子</option>
+                        <option value="5">5/4拍子</option>
+                        <option value="6">6/4拍子</option>
+                        <option value="7">7/4拍子</option>
+                    </select>
+                </div>
+
+                <div class="control-group">
+                    <label for="keySelect">キー:</label>
+                    <select id="keySelect">
+                        <option value="0">C / Am</option>
+                        <option value="1">C# / A#m</option>
+                        <option value="2">D / Bm</option>
+                        <option value="3">D# / Cm</option>
+                        <option value="4">E / C#m</option>
+                        <option value="5">F / Dm</option>
+                        <option value="6">F# / D#m</option>
+                        <option value="7">G / Em</option>
+                        <option value="8">G# / Fm</option>
+                        <option value="9">A / F#m</option>
+                        <option value="10">A# / Gm</option>
+                        <option value="11">B / G#m</option>
+                    </select>
+                </div>
+
+                <div class="control-group">
+                    <label for="scaleSelect">曲調:</label>
+                    <select id="scaleSelect">
+                        <option value="minor">切ない (マイナー)</option>
+                        <option value="major">明るい (メジャー)</option>
+                        <option value="japanese">和風 (ヨナ抜き)</option>
+                        <option value="rpg_battle">ボス戦 (激しい)</option>
+                    </select>
+                </div>
+
+                <div class="control-group" style="background: rgba(0,0,0,0.1); padding: 8px; border-radius: 4px; flex-direction: column; align-items: stretch; gap: 8px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <label for="partSelect" style="margin-right: 10px;">パート:</label>
+                        <select id="partSelect" style="width: 170px;">
+                            <option value="0">🟩 メロディ (矩形波)</option>
+                            <option value="1">🟦 ベース (三角波)</option>
+                            <option value="2">🟥 リズム (ノイズ)</option>
+                            <option value="3">🟫 サブ (ノコギリ波)</option>
+                        </select>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
+                        <label for="toneSlider" title="音の明るさや種類を変えます">音色:</label>
+                        <input type="range" id="toneSlider" min="0" max="100" value="50" style="width: 70px;">
+                        <label for="lengthSlider" title="音の長さを変えます" style="margin-left: 5px;">長さ:</label>
+                        <input type="range" id="lengthSlider" min="10" max="100" value="80" style="width: 70px;">
+                    </div>
+                </div>
+
+                <button id="btnAutoGenerate">✨ 自動で作成</button>
+                <button id="btnClear">🗑️ 消す</button>
+                <button id="btnFavorite" style="border-color: #ffd700; color: #ffd700;">★ お気に入りに登録</button>
+            </div>
+
+            <div class="canvas-container">
+                <canvas id="pianoRollCanvas" width="800" height="600"></canvas>
+            </div>
+            
+            <div class="instructions">
+                <p>「パート」を切り替えることで、メロディやベース、ドラム（リズム）を重ねて作成できます。<br>
+                マス目をクリックして音を置き、<strong>そのまま右にドラッグすると音を長く伸ばせます。</strong><br>
+                左端の鍵盤をクリックすると、音のプレビューが鳴ります。</p>
+            </div>
+        </div>
+
+        <!-- ============================== -->
+        <!-- タブ2: ソング作成画面            -->
+        <!-- ============================== -->
+        <div id="tab-song" style="display: none;">
+            <div class="toolbar">
+                <button id="btnPlaySong">▶ 曲を再生</button>
+                <button id="btnClearSong">🗑️ 曲をぜんぶ消す</button>
+                <span class="separator">|</span>
+                <button id="btnSaveLocal" title="ブラウザに一時保存">💾 セーブ</button>
+                <button id="btnLoadLocal" title="ブラウザから読込">📂 ロード</button>
+                <span class="separator">|</span>
+                <button id="btnExportJson" title="PCにプロジェクトファイルを保存">⬇️ プロジェクト書出</button>
+                <input type="file" id="inputFile" accept=".json" style="display:none;">
+                <button id="btnImportJson" title="PCからプロジェクトファイルを読込">⬆️ 読込</button>
+                <button id="btnExportWav" title="音声ファイルとしてダウンロード" style="border-color: #ff7b9c; color: #ff7b9c;">🎵 WAV保存</button>
+            </div>
+
+            <div class="palette" id="favoritePalette">
+                <span class="palette-label">選択中のフレーズ:</span>
+                <div id="paletteButtons" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;"></div>
+                <button id="btnDeleteFavorite" style="margin-left: auto; border-color: #ff4c4c; color: #ff4c4c; display: none;">🗑️ フレーズを削除</button>
+            </div>
+
+            <div class="canvas-container">
+                <canvas id="songCanvas" width="800" height="240"></canvas>
+            </div>
+            
+            <div class="instructions">
+                <p>上のパレットから登録したフレーズを選び、下のマス目に配置して曲を構成します。<br>
+                横に並べると「連結」、縦に並べると「重ねる」ことができます。<br>
+                ※「🎵 WAV保存」で、組み立てた曲を音声ファイルとしてダウンロードできます。</p>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // ==========================================
+        // 内部ロジック: UCD-F_ABC 準拠のコアシステム
+        // ==========================================
+
+        const config = {
+            beats: 4, // 1小節あたりの拍数 (デフォルト4/4拍子)
+            measures: 2, // フレーズの小節数
+            get steps() { return this.beats * 4 * this.measures; } // 総ステップ数
+        };
+
+        const CONSTANTS = {
+            MAX_ENTITIES: 1024,       // フレーズごとの最大音符数
+            PITCH_START: 36,          // C2 (低音域拡張)
+            PITCH_END: 84,            // C6 (高音域拡張)
+            
+            // 波形（パート）定義
+            WAVE_SQUARE: 0,   // メロディ
+            WAVE_TRIANGLE: 1, // ベース
+            WAVE_NOISE: 2,    // リズム
+            WAVE_SAWTOOTH: 3, // サブ
+            
+            // ソング（曲構成）用の定数
+            MAX_PATTERNS: 8,
+            SONG_TRACKS: 4,
+            SONG_BLOCKS: 16
+        };
+        const PITCH_COUNT = CONSTANTS.PITCH_END - CONSTANTS.PITCH_START + 1;
+
+        // UI描画用の色定義
+        const WAVE_COLORS = {
+            0: '#0f380f', // メロディ: 濃い緑
+            1: '#1f3b5a', // ベース: 濃い青
+            2: '#5a1f2b', // リズム: 濃い赤
+            3: '#5a4b1f'  // サブ: 濃い茶色
+        };
+
+        const PATTERN_COLORS = [
+            '#ff7b9c', '#60d394', '#aaf683', '#ffd97d', 
+            '#ff9b85', '#84dcc6', '#a5ffd6', '#ffa69e'
+        ];
+
+        // 鍵盤UIの幅
+        const KEYBOARD_WIDTH = 40;
+
+        // 各パートごとの音色設定
+        const partSettings = {
+            0: { tone: 0.5, length: 0.8 }, // メロディ
+            1: { tone: 0.5, length: 0.8 }, // ベース
+            2: { tone: 0.5, length: 0.8 }, // リズム
+            3: { tone: 0.5, length: 0.8 }  // サブ
+        };
+
+        // MIDIノート番号から音名を取得する関数
+        function getNoteName(pitch) {
+            const notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+            const octave = Math.floor(pitch / 12) - 1;
+            return notes[pitch % 12] + octave;
+        }
+
+        class CoreStateBuffer {
+            constructor() {
+                this.buffer = new Uint32Array(CONSTANTS.MAX_ENTITIES);
+            }
+
+            // Duration（ノートの長さ）を追加でパックする
+            pack(pitch, step, waveType, isActive, duration = 1) {
+                let packed = 0;
+                packed |= (pitch & 0xFF);
+                packed |= (step & 0xFF) << 8;
+                packed |= (waveType & 0x03) << 16;
+                packed |= (isActive & 0x01) << 18;
+                packed |= (duration & 0xFF) << 19; // 19〜26ビット目に持続ステップ数を保存
+                return packed;
+            }
+
+            unpack(packed) {
+                let dur = (packed >> 19) & 0xFF;
+                if (dur === 0) dur = 1; // 過去のセーブデータへのフェールセーフ
+                return {
+                    pitch: packed & 0xFF,
+                    step: (packed >> 8) & 0xFF,
+                    waveType: (packed >> 16) & 0x03,
+                    isActive: (packed >> 18) & 0x01,
+                    duration: dur
+                };
+            }
+
+            findEmptySlot() {
+                for (let i = 0; i < CONSTANTS.MAX_ENTITIES; i++) {
+                    if (!this.unpack(this.buffer[i]).isActive) return i;
+                }
+                return -1;
+            }
+
+            clear() {
+                this.buffer.fill(0);
+            }
+
+            // 指定されたステップで発音が開始されるノートを取得
+            getNotesAtStep(step) {
+                const notes = [];
+                for (let i = 0; i < CONSTANTS.MAX_ENTITIES; i++) {
+                    const state = this.unpack(this.buffer[i]);
+                    if (state.isActive && state.step === step) notes.push(state);
+                }
+                return notes;
+            }
+        }
+
+        const state = new CoreStateBuffer();
+        const favoritePatterns = Array(CONSTANTS.MAX_PATTERNS).fill(null).map(() => new CoreStateBuffer());
+        const isPatternUsed = Array(CONSTANTS.MAX_PATTERNS).fill(false);
+        let selectedPatternId = -1; 
+        const songGrid = new Uint8Array(CONSTANTS.SONG_TRACKS * CONSTANTS.SONG_BLOCKS).fill(255);
+
+        // ==========================================
+        // オーディオエンジン
+        // ==========================================
+        class AudioEngine {
+            constructor() {
+                this.ctx = null;
+                this.isPlaying = false;
+                this.bpm = 120;
+                this.playMode = 'phrase'; 
+                this.playStep = 0; 
+                this.nextNoteTime = 0;
+                this.scheduleAheadTime = 0.1; 
+                this.timerID = null;
+                this.onStepCallback = null;
+            }
+
+            init() {
+                if (!this.ctx) {
+                    this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+            }
+
+            midiToFreq(midiNote) {
+                return 440 * Math.pow(2, (midiNote - 69) / 12);
+            }
+
+            makePulseCurve(dutyCycle) {
+                const curve = new Float32Array(2048);
+                for (let i = 0; i < 2048; i++) {
+                    curve[i] = i / 2048 < dutyCycle ? 1 : -1;
+                }
+                return curve;
+            }
+
+            playNoise(time, duration, tone) {
+                const bufferSize = this.ctx.sampleRate * duration;
+                const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = Math.random() * 2 - 1; 
+                }
+                
+                const noise = this.ctx.createBufferSource();
+                noise.buffer = buffer;
+                
+                const filter = this.ctx.createBiquadFilter();
+                if (tone < 0.3) {
+                    filter.type = 'lowpass'; 
+                    filter.frequency.value = 100 + tone * 1000;
+                } else if (tone < 0.7) {
+                    filter.type = 'bandpass'; 
+                    filter.frequency.value = 1000 + (tone - 0.3) * 5000;
+                } else {
+                    filter.type = 'highpass'; 
+                    filter.frequency.value = 5000 + (tone - 0.7) * 10000;
+                }
+                
+                const gain = this.ctx.createGain();
+                gain.gain.setValueAtTime(0, time);
+                gain.gain.linearRampToValueAtTime(0.2, time + 0.005);
+                gain.gain.exponentialRampToValueAtTime(0.001, time + duration);
+                
+                noise.connect(filter);
+                filter.connect(gain);
+                gain.connect(this.ctx.destination);
+                
+                noise.start(time);
+            }
+
+            // 第5引数で durationSteps (ノートの長さ) を受け取る
+            playTone(pitch, time, secondsPerStep, waveType, noteDurationSteps = 1) {
+                const settings = partSettings[waveType] || { tone: 0.5, length: 0.8 };
+                // durationSteps分だけベースの時間を伸ばす
+                const baseDuration = secondsPerStep * noteDurationSteps;
+                // lengthスライダーの設定を反映
+                const actualDuration = baseDuration * (settings.length * 1.5 + 0.1);
+
+                if (waveType === CONSTANTS.WAVE_NOISE) {
+                    this.playNoise(time, actualDuration, settings.tone);
+                    return;
+                }
+
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                let lastNode = osc;
+                
+                if (waveType === CONSTANTS.WAVE_SQUARE) {
+                    osc.type = 'sawtooth';
+                    const shaper = this.ctx.createWaveShaper();
+                    shaper.curve = this.makePulseCurve(0.125 + settings.tone * 0.375);
+                    osc.connect(shaper);
+                    lastNode = shaper;
+                } else if (waveType === CONSTANTS.WAVE_TRIANGLE) {
+                    osc.type = 'triangle';
+                    const filter = this.ctx.createBiquadFilter();
+                    filter.type = 'lowpass';
+                    filter.frequency.value = 300 + settings.tone * 3000;
+                    lastNode.connect(filter);
+                    lastNode = filter;
+                } else if (waveType === CONSTANTS.WAVE_SAWTOOTH) {
+                    osc.type = 'sawtooth';
+                    const filter = this.ctx.createBiquadFilter();
+                    filter.type = 'lowpass';
+                    filter.frequency.value = 500 + settings.tone * 5000;
+                    lastNode.connect(filter);
+                    lastNode = filter;
+                }
+
+                let targetPitch = waveType === CONSTANTS.WAVE_TRIANGLE ? pitch - 12 : pitch;
+                osc.frequency.value = this.midiToFreq(targetPitch);
+
+                gain.gain.setValueAtTime(0, time);
+                
+                if (waveType === CONSTANTS.WAVE_TRIANGLE) { 
+                    gain.gain.linearRampToValueAtTime(0.3, time + 0.02); 
+                    gain.gain.exponentialRampToValueAtTime(0.01, time + actualDuration); 
+                } else if (waveType === CONSTANTS.WAVE_SAWTOOTH) { 
+                    gain.gain.linearRampToValueAtTime(0.1, time + 0.01); 
+                    gain.gain.exponentialRampToValueAtTime(0.001, time + actualDuration); 
+                } else { 
+                    gain.gain.linearRampToValueAtTime(0.15, time + 0.01); 
+                    // 減衰時間を調整して音が途切れないようにする
+                    gain.gain.exponentialRampToValueAtTime(0.001, time + actualDuration - 0.01); 
+                }
+
+                lastNode.connect(gain);
+                gain.connect(this.ctx.destination);
+
+                osc.start(time);
+                osc.stop(time + actualDuration);
+            }
+
+            schedule() {
+                const secondsPerStep = (60 / this.bpm) / 4;
+                const maxStep = this.playMode === 'phrase' 
+                                ? config.steps 
+                                : CONSTANTS.SONG_BLOCKS * config.steps;
+
+                while (this.nextNoteTime < this.ctx.currentTime + this.scheduleAheadTime) {
+                    
+                    let notes = [];
+                    if (this.playMode === 'phrase') {
+                        notes = state.getNotesAtStep(this.playStep);
+                    } else {
+                        let blockIndex = Math.floor(this.playStep / config.steps);
+                        let stepInBlock = this.playStep % config.steps;
+                        for (let track = 0; track < CONSTANTS.SONG_TRACKS; track++) {
+                            let patternId = songGrid[track * CONSTANTS.SONG_BLOCKS + blockIndex];
+                            if (patternId !== 255 && isPatternUsed[patternId]) {
+                                notes.push(...favoritePatterns[patternId].getNotesAtStep(stepInBlock));
+                            }
+                        }
+                    }
+
+                    notes.forEach(note => {
+                        // ノートの長さ (note.duration) を渡す
+                        this.playTone(note.pitch, this.nextNoteTime, secondsPerStep, note.waveType, note.duration);
+                    });
+
+                    if (this.onStepCallback) {
+                        let uiStep = this.playStep;
+                        let mode = this.playMode;
+                        setTimeout(() => this.onStepCallback(uiStep, mode), (this.nextNoteTime - this.ctx.currentTime) * 1000);
+                    }
+
+                    this.nextNoteTime += secondsPerStep;
+                    this.playStep++;
+                    if (this.playStep >= maxStep) {
+                        this.playStep = 0; 
+                    }
+                }
+                this.timerID = requestAnimationFrame(() => this.schedule());
+            }
+
+            start(mode) {
+                if(this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
+                this.playMode = mode;
+                this.isPlaying = true;
+                this.playStep = 0;
+                this.nextNoteTime = this.ctx.currentTime + 0.1;
+                this.schedule();
+            }
+
+            stop() {
+                this.isPlaying = false;
+                cancelAnimationFrame(this.timerID);
+                if (this.onStepCallback) this.onStepCallback(-1, this.playMode);
+            }
+        }
+
+        const audio = new AudioEngine();
+
+        // ==========================================
+        // View Layer (UI描画)
+        // ==========================================
+        const phraseCanvas = document.getElementById('pianoRollCanvas');
+        const phraseCtx = phraseCanvas.getContext('2d');
+        let cellWPhrase = (phraseCanvas.width - KEYBOARD_WIDTH) / config.steps; 
+        const cellHPhrase = phraseCanvas.height / PITCH_COUNT;
+
+        const songCanvas = document.getElementById('songCanvas');
+        const songCtx = songCanvas.getContext('2d');
+        const cellWSong = songCanvas.width / CONSTANTS.SONG_BLOCKS;
+        const cellHSong = songCanvas.height / CONSTANTS.SONG_TRACKS;
+
+        let uiCurrentStep = -1;
+
+        function drawPhraseCanvas() {
+            phraseCtx.clearRect(0, 0, phraseCanvas.width, phraseCanvas.height);
+
+            // 背景とグリッド
+            phraseCtx.lineWidth = 1;
+            for (let pitchIdx = 0; pitchIdx < PITCH_COUNT; pitchIdx++) {
+                const pitch = CONSTANTS.PITCH_END - pitchIdx;
+                const noteInOctave = pitch % 12;
+                const isBlackKey = [1, 3, 6, 8, 10].includes(noteInOctave);
+                const y = pitchIdx * cellHPhrase;
+                
+                // 鍵盤
+                phraseCtx.fillStyle = isBlackKey ? '#1f3b5a' : '#9bbc0f'; 
+                phraseCtx.fillRect(0, y, KEYBOARD_WIDTH, cellHPhrase);
+                phraseCtx.strokeStyle = '#0f380f';
+                phraseCtx.strokeRect(0, y, KEYBOARD_WIDTH, cellHPhrase);
+
+                phraseCtx.fillStyle = isBlackKey ? '#9bbc0f' : '#0f380f';
+                phraseCtx.textBaseline = 'middle';
+                if (noteInOctave === 0) {
+                    phraseCtx.font = 'bold 12px DotGothic16'; 
+                } else {
+                    phraseCtx.font = '10px DotGothic16';
+                }
+                phraseCtx.fillText(getNoteName(pitch), 4, y + cellHPhrase / 2);
+
+                // ノートエリア背景
+                for (let step = 0; step < config.steps; step++) {
+                    const x = KEYBOARD_WIDTH + step * cellWPhrase;
+                    phraseCtx.fillStyle = isBlackKey ? 'rgba(48, 98, 48, 0.1)' : 'rgba(139, 172, 15, 0.1)';
+                    if (step === uiCurrentStep && audio.playMode === 'phrase') {
+                        phraseCtx.fillStyle = 'rgba(155, 188, 15, 0.4)';
+                    }
+                    phraseCtx.fillRect(x, y, cellWPhrase, cellHPhrase);
+                    phraseCtx.strokeStyle = '#8bac0f';
+                    phraseCtx.strokeRect(x, y, cellWPhrase, cellHPhrase);
+                }
+            }
+
+            // 拍線
+            for (let step = 0; step <= config.steps; step += 4) {
+                const isMeasureLine = (step % (config.beats * 4) === 0);
+                phraseCtx.lineWidth = isMeasureLine ? 3 : 1;
+                phraseCtx.strokeStyle = isMeasureLine ? '#0f380f' : '#306230';
+                phraseCtx.beginPath();
+                const x = KEYBOARD_WIDTH + step * cellWPhrase;
+                phraseCtx.moveTo(x, 0);
+                phraseCtx.lineTo(x, phraseCanvas.height);
+                phraseCtx.stroke();
+            }
+
+            // 音符の描画
+            for (let i = 0; i < CONSTANTS.MAX_ENTITIES; i++) {
+                const note = state.unpack(state.buffer[i]);
+                if (note.isActive && note.step < config.steps) { 
+                    const x = KEYBOARD_WIDTH + note.step * cellWPhrase;
+                    const y = (CONSTANTS.PITCH_END - note.pitch) * cellHPhrase;
+                    
+                    // ノートの長さに応じて幅を計算 (キャンバス外にはみ出ないよう制限)
+                    let dur = note.duration;
+                    if (note.step + dur > config.steps) dur = config.steps - note.step;
+                    const w = cellWPhrase * dur;
+
+                    phraseCtx.fillStyle = WAVE_COLORS[note.waveType] || '#0f380f';
+                    phraseCtx.fillRect(x + 2, y + 2, w - 4, cellHPhrase - 4);
+
+                    // パート識別アイコン (最初の1マス目にだけ描画)
+                    phraseCtx.fillStyle = 'rgba(255,255,255,0.3)';
+                    if(note.waveType === 1) { // ベース(三角)
+                        phraseCtx.beginPath();
+                        phraseCtx.moveTo(x + cellWPhrase/2, y + 4);
+                        phraseCtx.lineTo(x + cellWPhrase - 4, y + cellHPhrase - 4);
+                        phraseCtx.lineTo(x + 4, y + cellHPhrase - 4);
+                        phraseCtx.fill();
+                    } else if (note.waveType === 2) { // リズム(ノイズ)
+                        phraseCtx.beginPath();
+                        phraseCtx.arc(x + cellWPhrase/2, y + cellHPhrase/2, 4, 0, Math.PI*2);
+                        phraseCtx.fill();
+                    } else if (note.waveType === 3) { // サブ(ノコギリ)
+                        phraseCtx.beginPath();
+                        phraseCtx.moveTo(x + 2, y + cellHPhrase - 2);
+                        phraseCtx.lineTo(x + cellWPhrase - 2, y + 2);
+                        phraseCtx.lineTo(x + cellWPhrase - 2, y + cellHPhrase - 2);
+                        phraseCtx.fill();
+                    }
+                }
+            }
+        }
+
+        // タブ2: ソングエディタの描画
+        function drawSongCanvas() {
+            songCtx.clearRect(0, 0, songCanvas.width, songCanvas.height);
+            songCtx.lineWidth = 1;
+            songCtx.strokeStyle = '#306230';
+            
+            for(let t = 0; t < CONSTANTS.SONG_TRACKS; t++) {
+                for(let b = 0; b < CONSTANTS.SONG_BLOCKS; b++) {
+                    const x = b * cellWSong;
+                    const y = t * cellHSong;
+                    
+                    songCtx.fillStyle = 'rgba(139, 172, 15, 0.1)';
+                    songCtx.fillRect(x, y, cellWSong, cellHSong);
+                    songCtx.strokeRect(x, y, cellWSong, cellHSong);
+                    
+                    let pId = songGrid[t * CONSTANTS.SONG_BLOCKS + b];
+                    if(pId !== 255 && isPatternUsed[pId]) {
+                        songCtx.fillStyle = PATTERN_COLORS[pId % PATTERN_COLORS.length];
+                        songCtx.fillRect(x + 2, y + 2, cellWSong - 4, cellHSong - 4);
+                        
+                        songCtx.fillStyle = '#0f380f';
+                        songCtx.font = 'bold 16px DotGothic16';
+                        songCtx.fillText('F' + (pId + 1), x + cellWSong/2 - 10, y + cellHSong/2 + 6);
+                    }
+                }
+            }
+
+            songCtx.strokeStyle = '#0f380f';
+            songCtx.lineWidth = 2;
+            for (let b = 0; b <= CONSTANTS.SONG_BLOCKS; b += 2) {
+                songCtx.beginPath();
+                songCtx.moveTo(b * cellWSong, 0);
+                songCtx.lineTo(b * cellWSong, songCanvas.height);
+                songCtx.stroke();
+            }
+            
+            if (audio.isPlaying && audio.playMode === 'song' && uiCurrentStep >= 0) {
+                let currentBlock = Math.floor(uiCurrentStep / config.steps);
+                let progressInBlock = (uiCurrentStep % config.steps) / config.steps;
+                let lineX = (currentBlock + progressInBlock) * cellWSong;
+                
+                songCtx.fillStyle = 'rgba(155, 188, 15, 0.3)';
+                songCtx.fillRect(currentBlock * cellWSong, 0, cellWSong, songCanvas.height);
+                
+                songCtx.strokeStyle = '#9bbc0f';
+                songCtx.lineWidth = 3;
+                songCtx.beginPath();
+                songCtx.moveTo(lineX, 0);
+                songCtx.lineTo(lineX, songCanvas.height);
+                songCtx.stroke();
+            }
+        }
+
+        // お気に入りパレットのUI更新
+        function updateFavoriteUI() {
+            const btnContainer = document.getElementById('paletteButtons');
+            const btnDelete = document.getElementById('btnDeleteFavorite');
+            btnContainer.innerHTML = '';
+            
+            let count = 0;
+            for(let i=0; i < CONSTANTS.MAX_PATTERNS; i++) {
+                if(isPatternUsed[i]) {
+                    count++;
+                    const btn = document.createElement('button');
+                    btn.className = 'palette-btn';
+                    btn.textContent = `F${i+1}`;
+                    btn.style.backgroundColor = PATTERN_COLORS[i % PATTERN_COLORS.length];
+                    btn.style.color = '#0f380f';
+                    
+                    if(selectedPatternId === i) {
+                        btn.style.borderColor = '#fff';
+                        btn.style.transform = 'scale(1.1)';
+                    }
+                    
+                    btn.onclick = () => {
+                        selectedPatternId = i;
+                        updateFavoriteUI();
+                    };
+                    btnContainer.appendChild(btn);
+                }
+            }
+            
+            if (count === 0) {
+                btnContainer.innerHTML = '<span style="color: gray;">フレーズ作成画面で「お気に入りに登録」してください。</span>';
+                btnDelete.style.display = 'none';
+                selectedPatternId = -1;
+            } else {
+                btnDelete.style.display = selectedPatternId !== -1 ? 'block' : 'none';
+            }
+        }
+
+        audio.onStepCallback = (step, mode) => {
+            uiCurrentStep = step;
+            if (mode === 'phrase') drawPhraseCanvas();
+            if (mode === 'song') drawSongCanvas();
+        };
+
+        // ==========================================
+        // イベントリスナー
+        // ==========================================
+
+        document.getElementById('btnTabPhrase').addEventListener('click', () => {
+            audio.stop();
+            document.getElementById('btnPlay').textContent = '▶ 再生';
+            document.getElementById('btnPlaySong').textContent = '▶ 曲を再生';
+            
+            document.getElementById('tab-phrase').style.display = 'block';
+            document.getElementById('tab-song').style.display = 'none';
+            document.getElementById('btnTabPhrase').classList.add('active');
+            document.getElementById('btnTabSong').classList.remove('active');
+            drawPhraseCanvas();
+        });
+
+        document.getElementById('btnTabSong').addEventListener('click', () => {
+            audio.stop();
+            document.getElementById('btnPlay').textContent = '▶ 再生';
+            document.getElementById('btnPlaySong').textContent = '▶ 曲を再生';
+            
+            document.getElementById('tab-phrase').style.display = 'none';
+            document.getElementById('tab-song').style.display = 'block';
+            document.getElementById('btnTabPhrase').classList.remove('active');
+            document.getElementById('btnTabSong').classList.add('active');
+            updateFavoriteUI();
+            drawSongCanvas();
+        });
+
+        // スライダー（音色・長さ）のUI連動処理
+        document.getElementById('partSelect').addEventListener('change', (e) => {
+            const part = parseInt(e.target.value);
+            document.getElementById('toneSlider').value = partSettings[part].tone * 100;
+            document.getElementById('lengthSlider').value = partSettings[part].length * 100;
+        });
+
+        document.getElementById('toneSlider').addEventListener('input', (e) => {
+            const part = parseInt(document.getElementById('partSelect').value);
+            partSettings[part].tone = parseInt(e.target.value) / 100;
+        });
+
+        document.getElementById('lengthSlider').addEventListener('input', (e) => {
+            const part = parseInt(document.getElementById('partSelect').value);
+            partSettings[part].length = parseInt(e.target.value) / 100;
+        });
+
+        // 拍子の変更
+        document.getElementById('timeSigSelect').addEventListener('change', (e) => {
+            if (confirm("拍子を変更しますか？\n※曲の構成(ソング画面)はリセットされます。\nお気に入りフレーズは残りますが、長さが合わなくなる場合があります。")) {
+                config.beats = parseInt(e.target.value);
+                cellWPhrase = (phraseCanvas.width - KEYBOARD_WIDTH) / config.steps; // セル幅を再計算
+                songGrid.fill(255); // 曲の構成をリセット
+                audio.stop();
+                drawPhraseCanvas();
+                drawSongCanvas();
+            } else {
+                e.target.value = config.beats; // キャンセル時は元に戻す
+            }
+        });
+
+        // ---------------------------------
+        // フレーズエディタ操作 (マウスドラッグで長さ変更対応)
+        // ---------------------------------
+        let isDraggingNote = false;
+        let draggingNoteIndex = -1;
+        let dragStartStep = -1;
+
+        phraseCanvas.addEventListener('mousedown', (e) => {
+            audio.init();
+            const rect = phraseCanvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (phraseCanvas.width / rect.width) - KEYBOARD_WIDTH;
+            const y = (e.clientY - rect.top) * (phraseCanvas.height / rect.height);
+            
+            const pitchIdx = Math.floor(y / cellHPhrase);
+            const pitch = CONSTANTS.PITCH_END - pitchIdx;
+            const currentWaveType = parseInt(document.getElementById('partSelect').value);
+
+            // 鍵盤エリアをクリックした場合、プレビュー音を鳴らす
+            if (x < 0) {
+                if (pitch >= CONSTANTS.PITCH_START && pitch <= CONSTANTS.PITCH_END) {
+                    audio.playTone(pitch, audio.ctx.currentTime, 0.5, currentWaveType, 1);
+                }
+                return;
+            }
+
+            const step = Math.floor(x / cellWPhrase);
+
+            if (step >= 0 && step < config.steps && pitch >= CONSTANTS.PITCH_START && pitch <= CONSTANTS.PITCH_END) {
+                
+                // クリックした場所に既存のノートがあるかチェック
+                let foundIdx = -1;
+                for (let i = 0; i < CONSTANTS.MAX_ENTITIES; i++) {
+                    const note = state.unpack(state.buffer[i]);
+                    if (note.isActive && note.pitch === pitch && note.waveType === currentWaveType) {
+                        // ノートの領域（開始step 〜 開始step + duration - 1）に含まれているか
+                        if (step >= note.step && step < note.step + note.duration) {
+                            foundIdx = i;
+                            break;
+                        }
+                    }
+                }
+
+                if (foundIdx !== -1) {
+                    const note = state.unpack(state.buffer[foundIdx]);
+                    // ノートの右端をクリックした場合は「長さを伸ばすモード」に移行
+                    if (step === note.step + note.duration - 1) {
+                        isDraggingNote = true;
+                        draggingNoteIndex = foundIdx;
+                        dragStartStep = note.step;
+                    } else {
+                        // それ以外の場所をクリックした場合は削除
+                        state.buffer[foundIdx] = 0; 
+                    }
+                } else {
+                    // 新規作成
+                    const slot = state.findEmptySlot();
+                    if (slot !== -1) {
+                        // duration 1 で作成し、そのままドラッグモードに入る
+                        state.buffer[slot] = state.pack(pitch, step, currentWaveType, 1, 1);
+                        isDraggingNote = true;
+                        draggingNoteIndex = slot;
+                        dragStartStep = step;
+                    }
+                }
+                drawPhraseCanvas();
+            }
+        });
+
+        // マウスを動かしてノートの長さを更新
+        phraseCanvas.addEventListener('mousemove', (e) => {
+            if (!isDraggingNote || draggingNoteIndex === -1) return;
+            
+            const rect = phraseCanvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (phraseCanvas.width / rect.width) - KEYBOARD_WIDTH;
+            if (x < 0) return;
+            
+            let step = Math.floor(x / cellWPhrase);
+            if (step >= config.steps) step = config.steps - 1; // はみ出し防止
+            
+            if (step >= dragStartStep) {
+                let newDuration = step - dragStartStep + 1;
+                const note = state.unpack(state.buffer[draggingNoteIndex]);
+                if (note.duration !== newDuration) {
+                    state.buffer[draggingNoteIndex] = state.pack(note.pitch, note.step, note.waveType, 1, newDuration);
+                    drawPhraseCanvas();
+                }
+            }
+        });
+
+        // マウスを離したらドラッグ終了
+        window.addEventListener('mouseup', () => {
+            isDraggingNote = false;
+            draggingNoteIndex = -1;
+        });
+
+        document.getElementById('btnPlay').addEventListener('click', () => {
+            audio.init();
+            if (audio.isPlaying && audio.playMode === 'phrase') {
+                audio.stop();
+                document.getElementById('btnPlay').textContent = '▶ 再生';
+            } else {
+                audio.start('phrase');
+                document.getElementById('btnPlay').textContent = '■ 停止';
+            }
+        });
+
+        document.getElementById('btnClear').addEventListener('click', () => {
+            if(confirm('現在のフレーズをすべて消去しますか？')) {
+                state.clear();
+                drawPhraseCanvas();
+            }
+        });
+
+        // 拡張自動生成 (コード進行、アンサンブル生成、拍子・曲調・モチーフ反復・デュレーション対応)
+        document.getElementById('btnAutoGenerate').addEventListener('click', () => {
+            state.clear();
+            
+            let shift = parseInt(document.getElementById('keySelect').value);
+            const ROOT_NOTE = 48 + shift; // 少し低めから開始し、メロディでオクターブ上げる
+            
+            const scaleType = document.getElementById('scaleSelect') ? document.getElementById('scaleSelect').value : 'minor';
+            
+            // 曲調ごとのスケール（インターバル）とコード進行（度数のインデックス）
+            let scaleIntervals, chordProgression; 
+            
+            if (scaleType === 'major') {
+                scaleIntervals = [0, 2, 4, 5, 7, 9, 11]; // メジャースケール
+                // I -> IV -> ii -> V
+                chordProgression = [0, 3, 1, 4]; 
+            } else if (scaleType === 'japanese') {
+                scaleIntervals = [0, 2, 3, 7, 8]; // 陰音階
+                // 和風は一定のドローンか、I -> iv -> i -> V 的な動き
+                chordProgression = [0, 3, 0, 2];
+            } else if (scaleType === 'rpg_battle') {
+                scaleIntervals = [0, 1, 4, 5, 7, 8, 10]; // フリジアン・ドミナント
+                // i -> VI -> i -> vii
+                chordProgression = [0, 5, 0, 6]; 
+            } else {
+                scaleIntervals = [0, 2, 3, 5, 7, 8, 10]; // ナチュラルマイナー
+                // i -> VI -> III -> VII
+                chordProgression = [0, 5, 2, 6]; 
+            }
+
+            // 指定キーのスケール音を生成（全音域）
+            let scaleNotes = [];
+            for (let octave = -1; octave <= 3; octave++) {
+                scaleIntervals.forEach(interval => {
+                    let note = ROOT_NOTE + interval + (octave * 12);
+                    if (note >= CONSTANTS.PITCH_START && note <= CONSTANTS.PITCH_END) scaleNotes.push(note);
+                });
+            }
+            scaleNotes.sort((a,b)=>a-b);
+
+            const measureSteps = config.beats * 4;
+            const halfMeasure = Math.max(2, measureSteps / 2);
+
+            // ステップごとのコード情報を取得する関数
+            const getChordForStep = (step) => {
+                // 半小節ごとにコード進行を進める
+                const progressionIndex = Math.floor(step / halfMeasure) % chordProgression.length;
+                const scaleIndex = chordProgression[progressionIndex];
+                
+                // コードのルート、3度、5度を計算
+                const rootPitch = ROOT_NOTE + scaleIntervals[scaleIndex];
+                // スケール内のインデックスから3度上、5度上を探す
+                const thirdPitch = ROOT_NOTE + scaleIntervals[(scaleIndex + 2) % scaleIntervals.length] + (scaleIndex + 2 >= scaleIntervals.length ? 12 : 0);
+                const fifthPitch = ROOT_NOTE + scaleIntervals[(scaleIndex + 4) % scaleIntervals.length] + (scaleIndex + 4 >= scaleIntervals.length ? 12 : 0);
+                
+                return { root: rootPitch, third: thirdPitch, fifth: fifthPitch };
+            };
+
+            // 1. ベース (WAVE_TRIANGLE)
+            for (let step = 0; step < config.steps; step++) {
+                const chord = getChordForStep(step);
+                let isHit = false;
+                let note = chord.root - 12; // 1オクターブ下
+                let duration = 1;
+
+                if (scaleType === 'rpg_battle') {
+                    // 16ビート刻み
+                    if (step % 2 === 0) { isHit = true; note = (step % 4 === 0) ? chord.root - 12 : chord.fifth - 12; }
+                } else if (config.beats === 3) {
+                    if (step % measureSteps === 0) { isHit = true; duration = 2; }
+                    else if (step % measureSteps === 4) { if(Math.random()<0.5) { isHit = true; note = chord.fifth - 12; } }
+                } else {
+                    if (step % measureSteps === 0) { isHit = true; duration = 2; }
+                    else if (step % measureSteps === halfMeasure) { isHit = true; note = chord.fifth - 12; duration = 2; }
+                    else if (step % 2 === 0 && Math.random() < 0.3) { isHit = true; note = (Math.random() < 0.5 ? chord.root - 12 : chord.third - 12); }
+                }
+
+                // 音域外チェック
+                if (note < CONSTANTS.PITCH_START) note += 12;
+
+                if (isHit) {
+                    const slot = state.findEmptySlot();
+                    if (slot !== -1) state.buffer[slot] = state.pack(note, step, CONSTANTS.WAVE_TRIANGLE, 1, duration);
+                }
+            }
+
+            // 2. サブ (WAVE_SAWTOOTH)
+            for (let step = 0; step < config.steps; step++) {
+                const chord = getChordForStep(step);
+                let isHit = false;
+                let note = chord.root;
+                let duration = 1;
+
+                if (scaleType === 'rpg_battle') {
+                    // アルペジオ
+                    isHit = true;
+                    const arp = [chord.root, chord.third, chord.fifth, chord.root + 12];
+                    note = arp[step % arp.length];
+                } else if (scaleType === 'japanese') {
+                    if (step % 4 === 2) { isHit = true; note = (Math.random() < 0.5 ? chord.root : chord.fifth); duration = 2; }
+                } else {
+                    // 裏打ちバッキング
+                    if (step % 2 === 1 && Math.random() < 0.8) {
+                        isHit = true;
+                        note = (Math.random() < 0.5 ? chord.third : chord.fifth);
+                    }
+                }
+
+                // 音域補正
+                if (note < CONSTANTS.PITCH_START) note += 12;
+
+                if (isHit) {
+                    const slot = state.findEmptySlot();
+                    if (slot !== -1) state.buffer[slot] = state.pack(note, step, CONSTANTS.WAVE_SAWTOOTH, 1, duration);
+                }
+            }
+
+            // 3. リズム (WAVE_NOISE)
+            for (let step = 0; step < config.steps; step++) {
+                let isHit = false;
+                let note = 60;
+                let duration = 1;
+                
+                if (scaleType === 'rpg_battle') {
+                    if (Math.random() < 0.7) isHit = true;
+                    if (step % 4 === 0) { isHit = true; duration = 2; }
+                } else if (scaleType === 'japanese') {
+                    if (step % measureSteps === 0) { isHit = true; duration = 4; }
+                    else if (step % measureSteps === measureSteps - 2) { isHit = true; }
+                } else if (config.beats === 3) {
+                    if (step % measureSteps === 0) { isHit = true; duration = 2; }
+                    if (step % measureSteps === 4 || step % measureSteps === 8) { if(Math.random()<0.8) isHit = true; }
+                } else {
+                    if (step % measureSteps === 0) { isHit = true; duration = 2; } // キック
+                    else if (step % 4 === 0 && step % measureSteps !== 0) { isHit = true; duration = 2; } // スネア
+                    else if (step % 2 === 0 && Math.random() < 0.5) isHit = true; // ハイハット
+                    else if (Math.random() < 0.1) isHit = true; // ゴースト
+                }
+                
+                if (isHit) {
+                    const slot = state.findEmptySlot();
+                    if (slot !== -1) state.buffer[slot] = state.pack(note, step, CONSTANTS.WAVE_NOISE, 1, duration);
+                }
+            }
+
+            // 4. メロディ (WAVE_SQUARE)
+            const melodyNotes = scaleNotes.filter(n => n >= ROOT_NOTE + 12); // メロディは1オクターブ上から
+            if (melodyNotes.length > 0) {
+                let prevNoteIdx = Math.floor(melodyNotes.length / 2); 
+                let motif = []; 
+
+                for (let step = 0; step < config.steps; step++) {
+                    let isHit = false;
+                    let targetNoteIdx = prevNoteIdx;
+                    let duration = 1;
+                    const chord = getChordForStep(step);
+
+                    if (step < measureSteps) {
+                        let restProb = (step % 2 !== 0) ? 0.4 : 0.1; 
+                        if (scaleType === 'japanese') restProb += 0.2; 
+                        if ((step + 1) % measureSteps === 0) restProb = 0.9; 
+
+                        if (Math.random() > restProb) {
+                            isHit = true;
+                            let minRuin = Infinity;
+                            let bestIdx = prevNoteIdx;
+
+                            for (let i = 0; i < melodyNotes.length; i++) {
+                                let jump = Math.abs(i - prevNoteIdx);
+                                let jumpPenalty = (jump > 4) ? jump * 3 : jump; // 跳躍しすぎを防止
+                                
+                                let structuralBonus = 0;
+                                let note = melodyNotes[i];
+                                
+                                // コード構成音への着地ボーナス
+                                let noteMod = note % 12;
+                                if (noteMod === chord.root % 12) structuralBonus -= 5;
+                                else if (noteMod === chord.third % 12) structuralBonus -= 3;
+                                else if (noteMod === chord.fifth % 12) structuralBonus -= 3;
+
+                                // 拍の頭はコードトーンを強く推奨
+                                if (step % 4 === 0 && structuralBonus === 0) {
+                                    jumpPenalty += 10;
+                                }
+
+                                let noise = Math.random() * 4;
+                                let ruinScore = jumpPenalty + structuralBonus + noise;
+
+                                if (ruinScore < minRuin) {
+                                    minRuin = ruinScore;
+                                    bestIdx = i;
+                                }
+                            }
+                            targetNoteIdx = bestIdx;
+                            // 長さをたまに伸ばす
+                            if (Math.random() < 0.3 && step % 2 === 0) duration = 2;
+                        }
+                        motif[step] = isHit ? { idx: targetNoteIdx, dur: duration } : null;
+                    } else {
+                        // 2小節目：モチーフ反復（コードに合わせて自動調整）
+                        let motifStep = step % measureSteps;
+                        
+                        if (motifStep >= measureSteps - 4) {
+                            // 終止形
+                            if (Math.random() < 0.7 && step % 2 === 0) {
+                                isHit = true;
+                                duration = 4; // 最後に伸ばす
+                                // ルート音で終わらせる
+                                let rootIdx = melodyNotes.findIndex(n => n % 12 === getChordForStep(config.steps - 1).root % 12);
+                                if (rootIdx !== -1) targetNoteIdx = rootIdx;
+                            }
+                        } else {
+                            if (motif[motifStep] !== null) {
+                                isHit = true;
+                                duration = motif[motifStep].dur;
+                                let baseNote = melodyNotes[motif[motifStep].idx];
+                                
+                                // コードトーンに合わせて最も近い音にシフト
+                                let minDiff = Infinity;
+                                let bestIdx = motif[motifStep].idx;
+                                
+                                for (let i = 0; i < melodyNotes.length; i++) {
+                                    let note = melodyNotes[i];
+                                    let noteMod = note % 12;
+                                    // 新しいコードの構成音かチェック
+                                    if (noteMod === chord.root % 12 || noteMod === chord.third % 12 || noteMod === chord.fifth % 12) {
+                                        let diff = Math.abs(note - baseNote);
+                                        if (diff < minDiff) {
+                                            minDiff = diff;
+                                            bestIdx = i;
+                                        }
+                                    }
+                                }
+                                // 元のモチーフに近いコードトーンを選択
+                                targetNoteIdx = (minDiff <= 4) ? bestIdx : motif[motifStep].idx;
+                            }
+                        }
+                    }
+
+                    if (isHit) {
+                        prevNoteIdx = targetNoteIdx;
+                        const slot = state.findEmptySlot();
+                        if (slot !== -1) {
+                            // 長さがはみ出さないように補正
+                            let finalDur = duration;
+                            if (step + finalDur > config.steps) finalDur = config.steps - step;
+                            state.buffer[slot] = state.pack(melodyNotes[targetNoteIdx], step, CONSTANTS.WAVE_SQUARE, 1, finalDur);
+                        }
+                        // 長い音符の場合はその間スキップさせる（休符扱い）
+                        if (duration > 1) {
+                            step += (duration - 1);
+                        }
+                    }
+                }
+            }
+            drawPhraseCanvas();
+        });
+
+        document.getElementById('btnFavorite').addEventListener('click', () => {
+            for(let i=0; i<CONSTANTS.MAX_PATTERNS; i++) {
+                if(!isPatternUsed[i]) {
+                    favoritePatterns[i].buffer.set(state.buffer);
+                    isPatternUsed[i] = true;
+                    
+                    const btn = document.getElementById('btnFavorite');
+                    const origText = btn.textContent;
+                    btn.textContent = `★ F${i+1}に登録しました!`;
+                    setTimeout(() => btn.textContent = origText, 1500);
+                    
+                    if(selectedPatternId === -1) selectedPatternId = i;
+                    updateFavoriteUI();
+                    return;
+                }
+            }
+            alert("お気に入りが一杯です（最大8個）。曲を組み立てて遊びましょう！");
+        });
+
+        // ---------------------------------
+        // ソングエディタ操作
+        // ---------------------------------
+        songCanvas.addEventListener('mousedown', (e) => {
+            if(selectedPatternId === -1) {
+                alert("まずは上のお気に入りパレットからフレーズを選んでください。");
+                return;
+            }
+            audio.init();
+
+            const rect = songCanvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (songCanvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (songCanvas.height / rect.height);
+            
+            const block = Math.floor(x / cellWSong);
+            const track = Math.floor(y / cellHSong);
+
+            if (block >= 0 && block < CONSTANTS.SONG_BLOCKS && track >= 0 && track < CONSTANTS.SONG_TRACKS) {
+                let idx = track * CONSTANTS.SONG_BLOCKS + block;
+                if (songGrid[idx] === selectedPatternId) {
+                    songGrid[idx] = 255; 
+                } else {
+                    songGrid[idx] = selectedPatternId;
+                }
+                drawSongCanvas();
+            }
+        });
+
+        document.getElementById('btnPlaySong').addEventListener('click', () => {
+            audio.init();
+            if (audio.isPlaying && audio.playMode === 'song') {
+                audio.stop();
+                document.getElementById('btnPlaySong').textContent = '▶ 曲を再生';
+            } else {
+                audio.start('song');
+                document.getElementById('btnPlaySong').textContent = '■ 停止';
+            }
+        });
+
+        document.getElementById('btnClearSong').addEventListener('click', () => {
+            if(confirm("曲の構成をすべて消去しますか？（お気に入りフレーズは残ります）")) {
+                songGrid.fill(255);
+                drawSongCanvas();
+            }
+        });
+
+        document.getElementById('btnDeleteFavorite').addEventListener('click', () => {
+            if (selectedPatternId === -1 || !isPatternUsed[selectedPatternId]) return;
+            
+            if (confirm(`フレーズ F${selectedPatternId + 1} を削除しますか？\n※曲の構成に配置されているものも消去されます。`)) {
+                favoritePatterns[selectedPatternId].clear();
+                isPatternUsed[selectedPatternId] = false;
+                
+                for (let i = 0; i < songGrid.length; i++) {
+                    if (songGrid[i] === selectedPatternId) {
+                        songGrid[i] = 255;
+                    }
+                }
+                
+                selectedPatternId = isPatternUsed.findIndex(v => v === true);
+                updateFavoriteUI();
+                drawSongCanvas();
+            }
+        });
+
+        // ---------------------------------
+        // 共通操作 (セーブ/ロード、ファイル入出力)
+        // ---------------------------------
+        document.getElementById('bpmSlider').addEventListener('input', (e) => {
+            audio.bpm = parseInt(e.target.value);
+            document.getElementById('bpmDisplay').textContent = audio.bpm;
+        });
+
+        // 保存用データオブジェクトの生成
+        function createSaveData() {
+            return {
+                beats: config.beats,
+                currentBuffer: Array.from(state.buffer),
+                favorites: favoritePatterns.map(p => Array.from(p.buffer)),
+                isUsed: isPatternUsed,
+                songGrid: Array.from(songGrid),
+                partSettings: partSettings
+            };
+        }
+
+        document.getElementById('btnSaveLocal').addEventListener('click', () => {
+            localStorage.setItem('ucdf_retro_seq_save_v5', JSON.stringify(createSaveData()));
+            const btn = document.getElementById('btnSaveLocal');
+            const originalText = btn.textContent;
+            btn.textContent = '✅ セーブ完了!';
+            setTimeout(() => btn.textContent = originalText, 1500);
+        });
+
+        function loadDataObj(dataArr) {
+            if (dataArr.beats) {
+                config.beats = dataArr.beats;
+                document.getElementById('timeSigSelect').value = config.beats;
+                cellWPhrase = (phraseCanvas.width - KEYBOARD_WIDTH) / config.steps;
+            }
+
+            state.buffer = new Uint32Array(dataArr.currentBuffer);
+            for(let i=0; i<CONSTANTS.MAX_PATTERNS; i++) {
+                favoritePatterns[i].buffer = new Uint32Array(dataArr.favorites[i]);
+                isPatternUsed[i] = dataArr.isUsed[i];
+            }
+            if(dataArr.songGrid) {
+                for(let i=0; i<songGrid.length; i++) songGrid[i] = dataArr.songGrid[i];
+            }
+            if(dataArr.partSettings) {
+                for(let i=0; i<4; i++) {
+                    if(dataArr.partSettings[i]) {
+                        partSettings[i].tone = dataArr.partSettings[i].tone;
+                        partSettings[i].length = dataArr.partSettings[i].length;
+                    }
+                }
+                // UI反映
+                const part = parseInt(document.getElementById('partSelect').value);
+                document.getElementById('toneSlider').value = partSettings[part].tone * 100;
+                document.getElementById('lengthSlider').value = partSettings[part].length * 100;
+            }
+            
+            selectedPatternId = isPatternUsed.findIndex(v => v === true);
+            updateFavoriteUI();
+            drawPhraseCanvas();
+            drawSongCanvas();
+        }
+
+        document.getElementById('btnLoadLocal').addEventListener('click', () => {
+            let dataStr = localStorage.getItem('ucdf_retro_seq_save_v5') || localStorage.getItem('ucdf_retro_seq_save_v4') || localStorage.getItem('ucdf_retro_seq_save_v3') || localStorage.getItem('ucdf_retro_seq_save_v2');
+            if (dataStr) {
+                try {
+                    loadDataObj(JSON.parse(dataStr));
+                    const btn = document.getElementById('btnLoadLocal');
+                    const originalText = btn.textContent;
+                    btn.textContent = '✅ ロード完了!';
+                    setTimeout(() => btn.textContent = originalText, 1500);
+                } catch (e) {
+                    alert('セーブデータが壊れています。');
+                }
+            } else {
+                alert('セーブデータがありません。');
+            }
+        });
+
+        document.getElementById('btnExportJson').addEventListener('click', () => {
+            const jsonStr = JSON.stringify(createSaveData());
+            const blob = new Blob([jsonStr], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'retro_project.json';
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+
+        document.getElementById('btnImportJson').addEventListener('click', () => {
+            document.getElementById('inputFile').click();
+        });
+
+        document.getElementById('inputFile').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                try {
+                    loadDataObj(JSON.parse(event.target.result));
+                } catch (err) {
+                    alert('ファイル形式が間違っています。');
+                }
+            };
+            reader.readAsText(file);
+            e.target.value = ''; 
+        });
+
+        // 音声ファイルとして書き出し (.wav)
+        document.getElementById('btnExportWav').addEventListener('click', async () => {
+            const btn = document.getElementById('btnExportWav');
+            const origText = btn.textContent;
+            btn.textContent = '⏳ 書き出し中...';
+            btn.disabled = true;
+
+            try {
+                const secondsPerStep = (60 / audio.bpm) / 4;
+                const totalSteps = CONSTANTS.SONG_BLOCKS * config.steps;
+                const duration = totalSteps * secondsPerStep;
+                const sampleRate = 44100;
+
+                // OfflineAudioContextを使ってバックグラウンドで高速レンダリング
+                const offlineCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, sampleRate * duration, sampleRate);
+                
+                // オフライン用のエンジンを生成
+                const offlineEngine = new AudioEngine();
+                offlineEngine.ctx = offlineCtx;
+                
+                for (let track = 0; track < CONSTANTS.SONG_TRACKS; track++) {
+                    for (let blockIndex = 0; blockIndex < CONSTANTS.SONG_BLOCKS; blockIndex++) {
+                        let patternId = songGrid[track * CONSTANTS.SONG_BLOCKS + blockIndex];
+                        if (patternId !== 255 && isPatternUsed[patternId]) {
+                            const patternBuffer = favoritePatterns[patternId];
+                            for (let stepInBlock = 0; stepInBlock < config.steps; stepInBlock++) {
+                                const notes = patternBuffer.getNotesAtStep(stepInBlock);
+                                notes.forEach(note => {
+                                    const time = (blockIndex * config.steps + stepInBlock) * secondsPerStep;
+                                    // 共通ロジックを使って発音スケジュール
+                                    offlineEngine.playTone(note.pitch, time, secondsPerStep, note.waveType, note.duration);
+                                });
+                            }
+                        }
+                    }
+                }
+                
+                const renderedBuffer = await offlineCtx.startRendering();
+                const wavBlob = audioBufferToWav(renderedBuffer);
+                const url = URL.createObjectURL(wavBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'retro_song.wav';
+                a.click();
+                URL.revokeObjectURL(url);
+
+            } catch (err) {
+                console.error(err);
+                alert("WAV書き出しに失敗しました。");
+            } finally {
+                btn.textContent = origText;
+                btn.disabled = false;
+            }
+        });
+
+        // AudioBufferをWAV形式のBlobに変換するユーティリティ
+        function audioBufferToWav(buffer) {
+            let numOfChan = buffer.numberOfChannels,
+                length = buffer.length * numOfChan * 2 + 44,
+                bufferArr = new ArrayBuffer(length),
+                view = new DataView(bufferArr),
+                channels = [], i, sample,
+                offset = 0,
+                pos = 0;
+
+            function setUint16(data) { view.setUint16(pos, data, true); pos += 2; }
+            function setUint32(data) { view.setUint32(pos, data, true); pos += 4; }
+
+            setUint32(0x46464952); // "RIFF"
+            setUint32(length - 8); // file length - 8
+            setUint32(0x45564157); // "WAVE"
+            setUint32(0x20746d66); // "fmt " chunk
+            setUint32(16); // length = 16
+            setUint16(1); // PCM (uncompressed)
+            setUint16(numOfChan);
+            setUint32(buffer.sampleRate);
+            setUint32(buffer.sampleRate * 2 * numOfChan); // avg. bytes/sec
+            setUint16(numOfChan * 2); // block-align
+            setUint16(16); // 16-bit
+            setUint32(0x61746164); // "data" - chunk
+            setUint32(length - pos - 4); // chunk length
+
+            for(i = 0; i < buffer.numberOfChannels; i++) channels.push(buffer.getChannelData(i));
+
+            while(pos < length) {
+                for(i = 0; i < numOfChan; i++) {
+                    sample = Math.max(-1, Math.min(1, channels[i][offset]));
+                    sample = (0.5 + sample < 0 ? sample * 32768 : sample * 32767)|0;
+                    view.setInt16(pos, sample, true);
+                    pos += 2;
+                }
+                offset++;
+            }
+            return new Blob([bufferArr], {type: "audio/wav"});
+        }
+
+        // 初期化
+        updateFavoriteUI();
+        drawPhraseCanvas();
+        drawSongCanvas();
+
+    </script>
+</body>
+</html>
