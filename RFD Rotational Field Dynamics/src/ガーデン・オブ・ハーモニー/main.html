@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-select=none">
+    <title>光の庭 - 星座と共鳴</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #02040a; 
+            color: #f3f4f6;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100dvh;
+        }
+        /* 明示的にタッチを有効化するクラス */
+        .interactive {
+            pointer-events: auto !important; 
+        }
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 28px;
+            width: 28px;
+            border-radius: 50%;
+            background: #fcd34d;
+            cursor: pointer;
+            margin-top: -10px;
+            box-shadow: 0 0 20px rgba(252, 211, 77, 1);
+            border: 2px solid #fff;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 8px;
+            cursor: pointer;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+        }
+        .glass-panel {
+            background: rgba(10, 15, 25, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255,255,255,0.15);
+        }
+        #manaBarContainer {
+            width: 100%;
+            height: 6px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+        #manaBar {
+            height: 100%;
+            width: 100%;
+            background: linear-gradient(90deg, #3b82f6, #8b5cf6, #fcd34d);
+            transition: width 0.1s ease-out;
+        }
+        @keyframes pop {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.3); }
+            100% { transform: scale(1); }
+        }
+        .pop-anim { animation: pop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        
+        #constellationModal {
+            transition: opacity 0.3s ease, transform 0.3s ease;
+            opacity: 0;
+            pointer-events: none;
+            transform: scale(0.95);
+        }
+        #constellationModal.active {
+            opacity: 1;
+            pointer-events: auto;
+            transform: scale(1);
+        }
+        .constellation-card {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px;
+            padding: 8px;
+            text-align: center;
+        }
+        .constellation-card img {
+            width: 100%;
+            height: 100px;
+            object-fit: contain;
+            background: #000;
+            border-radius: 4px;
+            margin-bottom: 4px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 描画領域 -->
+    <canvas id="simulationCanvas"></canvas>
+
+    <!-- 透明レイヤーを廃止し、UIを独立配置 -->
+    <!-- 上部UIパネル -->
+    <div id="top-ui" class="absolute top-0 left-0 w-full p-3 md:p-6 flex justify-between items-start gap-2 pointer-events-none transition-all duration-500 ease-in-out z-10">
+        <!-- 左パネル -->
+        <div class="glass-panel p-3 md:p-4 rounded-xl interactive shadow-lg">
+            <h1 class="text-base md:text-2xl font-bold tracking-wider text-yellow-200" style="text-shadow: 0 0 15px rgba(250,204,21,0.8);">光の庭 <span class="hidden md:inline text-sm font-normal text-gray-400">ASTERISM</span></h1>
+            <div class="mt-1 md:mt-2 flex gap-3 md:gap-6">
+                <div>
+                    <p class="text-[8px] md:text-[10px] text-gray-400 uppercase tracking-widest">TOTAL SCORE</p>
+                    <div class="text-sm md:text-2xl font-bold text-white font-mono" id="scoreDisplay">0</div>
+                </div>
+                <div>
+                    <p class="text-[8px] md:text-[10px] text-gray-400 uppercase tracking-widest">発見した星座</p>
+                    <div class="text-sm md:text-2xl font-bold text-blue-300 font-mono" id="constellationCount">0</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 右パネル -->
+        <div class="flex flex-col items-end gap-2 md:gap-3 pointer-events-none">
+            <button id="openBookBtn" class="glass-panel px-3 py-1.5 md:px-4 md:py-2 rounded-full text-xs md:text-sm font-bold text-yellow-300 hover:bg-white/10 transition-colors shadow-[0_0_15px_rgba(252,211,77,0.3)] flex items-center gap-1 md:gap-2 border border-yellow-500/30 interactive whitespace-nowrap">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
+                <span class="hidden sm:inline">星座図鑑を開く</span>
+                <span class="sm:hidden">図鑑</span>
+            </button>
+
+            <div class="text-right glass-panel p-2 md:p-3 rounded-xl interactive">
+                <p class="text-[8px] md:text-[10px] text-gray-400 uppercase tracking-widest">調和度</p>
+                <div class="text-lg md:text-4xl font-black text-yellow-400 font-mono" id="harmonyScore">100%</div>
+                <div id="comboContainer" class="mt-1 hidden">
+                    <span class="bg-orange-500 text-white text-[8px] md:text-[10px] px-1.5 md:px-2 py-0.5 rounded-sm font-bold uppercase tracking-wider animate-pulse whitespace-nowrap">
+                        <span id="comboMultiplier">2</span>x COMBO!
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 下部UIパネル -->
+    <div id="bottom-ui" class="absolute bottom-4 md:bottom-12 left-0 w-full flex justify-center pointer-events-none transition-all duration-500 ease-in-out z-10">
+        <div class="glass-panel p-4 md:p-5 w-[calc(100%-1.5rem)] md:w-[600px] rounded-2xl interactive shadow-[0_0_30px_rgba(0,0,0,0.5)] border-t border-white/20 relative">
+            <div id="newConstellationAlert" class="absolute -top-12 md:-top-14 left-1/2 -translate-x-1/2 bg-blue-600/90 border border-blue-300 text-white text-xs md:text-sm px-4 md:px-6 py-1.5 md:py-2 rounded-full shadow-[0_0_20px_rgba(59,130,246,0.8)] font-bold tracking-widest opacity-0 transition-opacity duration-300 whitespace-nowrap pointer-events-none">
+                ✨ 新しい星座を発見しました！
+            </div>
+
+            <div class="flex justify-between items-end mb-1 md:mb-2 pointer-events-none">
+                <p class="text-xs md:text-sm text-blue-200 font-bold tracking-wide">
+                    出力調整 <span class="text-[8px] md:text-[10px] font-normal opacity-70 ml-1">※光る瞬間に当てるとPERFECT</span>
+                </p>
+                <p class="text-[10px] md:text-xs text-blue-300 font-mono font-bold">MANA: <span id="manaText" class="text-white">100</span>%</p>
+            </div>
+            
+            <div id="manaBarContainer" class="pointer-events-none">
+                <div id="manaBar"></div>
+            </div>
+
+            <div class="flex items-center gap-2 md:gap-4 mt-2 md:mt-4">
+                <span class="text-[10px] md:text-xs text-blue-300 font-mono pointer-events-none">LV.1</span>
+                <!-- スライダーのみタッチ有効 -->
+                <input type="range" id="powerSlider" min="1" max="10" value="5" class="flex-1 interactive">
+                <span class="text-[10px] md:text-xs text-yellow-400 font-mono font-bold pointer-events-none" style="text-shadow: 0 0 5px orange;">LV.10</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- UIトグルボタン (常に表示・操作可能) -->
+    <button id="toggleUiBtn" class="absolute bottom-4 left-4 md:bottom-8 md:left-8 z-40 glass-panel p-2 md:p-3 rounded-full text-gray-400 hover:text-white transition-colors interactive shadow-[0_0_20px_rgba(0,0,0,0.5)] border border-white/10">
+        <svg id="eyeIconOpen" class="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+        <svg id="eyeIconClosed" class="w-5 h-5 md:w-6 md:h-6 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path></svg>
+    </button>
+
+    <!-- 星座図鑑モーダル -->
+    <div id="constellationModal" class="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-2 md:p-4 pointer-events-none">
+        <div class="glass-panel w-full max-w-4xl h-[85dvh] rounded-2xl flex flex-col interactive shadow-[0_0_50px_rgba(59,130,246,0.3)]">
+            <div class="p-4 md:p-6 border-b border-white/10 flex justify-between items-center pointer-events-none">
+                <h2 class="text-lg md:text-2xl font-bold text-blue-200 flex items-center gap-2 md:gap-3">
+                    <svg class="w-5 h-5 md:w-6 md:h-6 text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"></path></svg>
+                    Constellation Archive
+                </h2>
+                <button id="closeBookBtn" class="text-gray-400 hover:text-white bg-white/5 rounded-full p-1.5 md:p-2 transition-colors interactive">
+                    <svg class="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div class="p-4 md:p-6 overflow-y-auto flex-1 interactive">
+                <div id="constellationGrid" class="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 pointer-events-none">
+                    <p class="col-span-full text-center text-gray-500 mt-10 text-sm md:text-base pointer-events-none" id="emptyArchiveText">まだ星座は発見されていません。<br>光のネットワークを繋げてみましょう。</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+/**
+ * -------------------------------------------------------------
+ * 内部ロジック: UCD-F & RFD Core + Spatial Hash Grid最適化
+ * + 図鑑追加のクールダウンと重複防止 + 透明レイヤー完全排除
+ * -------------------------------------------------------------
+ */
+
+const canvas = document.getElementById('simulationCanvas');
+const ctx = canvas.getContext('2d');
+
+const uiElems = {
+    topUi: document.getElementById('top-ui'),
+    bottomUi: document.getElementById('bottom-ui'),
+    score: document.getElementById('scoreDisplay'),
+    constellationCount: document.getElementById('constellationCount'),
+    harmony: document.getElementById('harmonyScore'),
+    comboBox: document.getElementById('comboContainer'),
+    comboMult: document.getElementById('comboMultiplier'),
+    manaBar: document.getElementById('manaBar'),
+    manaText: document.getElementById('manaText'),
+    slider: document.getElementById('powerSlider'),
+    modal: document.getElementById('constellationModal'),
+    openBtn: document.getElementById('openBookBtn'),
+    closeBtn: document.getElementById('closeBookBtn'),
+    grid: document.getElementById('constellationGrid'),
+    emptyText: document.getElementById('emptyArchiveText'),
+    alert: document.getElementById('newConstellationAlert'),
+    toggleBtn: document.getElementById('toggleUiBtn'),
+    eyeOpen: document.getElementById('eyeIconOpen'),
+    eyeClosed: document.getElementById('eyeIconClosed')
+};
+
+const PI = Math.PI;
+const PHI = 1.6180339887; 
+const GOLDEN_ANGLE = 2.39996323; 
+const BASE_FRICTION = 0.05; 
+const CLUSTER_THRESHOLD = 10; 
+const LINK_DIST_SQ = 4500;
+const CELL_SIZE = 70; 
+const MAX_ARCHIVE = 20; 
+
+let width, height;
+let entities = [];
+let ripples = []; 
+let particles = [];
+let floatingTexts = [];
+let discoveredConstellations = []; 
+
+const NUM_ENTITIES = Math.min(window.innerWidth > 768 ? 1200 : 800, 1500); 
+let totalScore = 0;
+let currentCombo = 0;
+let comboTimer = 0;
+let mana = 100;
+let screenShake = 0;
+let constellationCooldown = 0; 
+let isUiHidden = false; 
+
+function resize() {
+    width = canvas.width = window.innerWidth;
+    height = canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+class Entity {
+    constructor(id) {
+        this.id = id;
+        this.x = Math.random() * width;
+        this.y = Math.random() * height;
+        this.theta = Math.random() * PI * 2;
+        this.omega = Math.random() * 2 + 1.0; 
+        this.jitter = (Math.random() - 0.5) * GOLDEN_ANGLE * 0.1;
+        this.direction = Math.random() * PI * 2;
+        this.baseSpeed = Math.random() * 20 + 5;
+        this.baseSize = Math.random() * 1.5 + 1.0;
+        this.hue = 200 + Math.random() * 60; 
+        
+        this.isDead = false;
+        this.flashTimer = 0;
+        this.deathTime = 0; 
+        
+        this.isConstellation = false;
+        this.constellationTimer = 0;
+        this.usedInArchive = false; 
+
+        this.gridX = 0;
+        this.gridY = 0;
+    }
+
+    update(dt) {
+        if (this.constellationTimer > 0) {
+            this.constellationTimer -= dt;
+            if(this.constellationTimer <= 0) this.isConstellation = false;
+        }
+
+        if (this.isDead) {
+            this.deathTime += dt;
+            return; 
+        }
+        this.deathTime = 0;
+
+        this.omega *= Math.pow(PHI, -dt * BASE_FRICTION);
+
+        if (this.omega < 3.0) {
+            this.usedInArchive = false;
+        }
+
+        if (this.omega < 0.1) {
+            this.omega = 0;
+            this.isDead = true;
+            return;
+        }
+
+        if(this.flashTimer > 0) this.flashTimer -= dt;
+
+        let subSteps = this.omega > 5 ? 3 : 1;
+        let subDt = dt / subSteps;
+        let eventTriggeredThisFrame = false;
+
+        for (let i = 0; i < subSteps; i++) {
+            let prevTheta = this.theta;
+            this.theta = (this.theta + (this.omega + this.jitter) * subDt) % (2 * PI);
+            if (Math.floor(prevTheta / PI) !== Math.floor(this.theta / PI)) {
+                eventTriggeredThisFrame = true;
+            }
+        }
+
+        if (eventTriggeredThisFrame) {
+            mana = Math.min(100, mana + 0.05);
+        }
+
+        this.direction += Math.sin(this.theta) * dt * 0.5;
+        let currentSpeed = this.baseSpeed * (this.omega * 0.3 + 0.7);
+        
+        this.x += Math.cos(this.direction) * currentSpeed * dt;
+        this.y += Math.sin(this.direction) * currentSpeed * dt;
+
+        const margin = 10;
+        if (this.x < margin) { this.x = margin; this.direction = 0; } 
+        else if (this.x > width - margin) { this.x = width - margin; this.direction = PI; }
+        if (this.y < margin) { this.y = margin; this.direction = PI / 2; } 
+        else if (this.y > height - margin) { this.y = height - margin; this.direction = -PI / 2; }
+    }
+
+    draw(ctx) {
+        let size = this.baseSize;
+        let alpha = 0;
+        let drawHue = this.hue;
+        let isAwake = this.omega > 6.0 || this.isConstellation;
+
+        if (this.isDead) {
+            alpha = 0.03;
+            ctx.fillStyle = `hsla(${drawHue}, 50%, 20%, ${alpha})`;
+            ctx.beginPath(); ctx.arc(this.x, this.y, size, 0, PI * 2); ctx.fill();
+        } else {
+            let sinVal = Math.pow(Math.sin(this.theta), 2);
+            
+            if (isAwake) {
+                alpha = 1.0;
+                size = this.baseSize * 2.5 + sinVal * 1.5;
+                drawHue = 50; 
+                ctx.fillStyle = '#ffffff'; 
+            } else if (this.omega > 2.0) {
+                alpha = sinVal * 0.6 + 0.4;
+                size = this.baseSize * 1.5;
+                ctx.fillStyle = `hsla(${drawHue}, 90%, 80%, ${alpha})`;
+            } else {
+                alpha = sinVal * 0.5 + 0.2;
+                ctx.fillStyle = `hsla(${drawHue}, 70%, 50%, ${alpha})`;
+            }
+
+            if (this.flashTimer > 0) {
+                size *= (1 + this.flashTimer * 2);
+                ctx.fillStyle = `rgba(255, 255, 255, ${this.flashTimer})`;
+            }
+
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, size, 0, PI * 2);
+            ctx.fill();
+
+            if (isAwake || this.omega > 2.0 || this.flashTimer > 0) {
+                let glowSize = size * (isAwake ? 3 : 1.8);
+                let glowAlpha = alpha * 0.3;
+                if (this.flashTimer > 0) glowAlpha = this.flashTimer * 0.5;
+                
+                ctx.fillStyle = isAwake ? `rgba(252, 211, 77, ${glowAlpha})` : `hsla(${drawHue}, 80%, 50%, ${glowAlpha})`;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, glowSize, 0, PI * 2);
+                ctx.fill();
+            }
+        }
+    }
+}
+
+class Ripple {
+    constructor(x, y, level, isChain = false) {
+        this.x = x; this.y = y; this.level = level; this.isChain = isChain;
+        this.radius = 0; this.maxRadius = level * 40 + 60; 
+        this.power = level * 1.5; this.life = 1.0;
+        this.hitEntities = new Set();
+        if (!isChain) {
+            screenShake = level * 1.5;
+            createParticles(x, y, level * 5, '#fcd34d');
+        }
+    }
+    update(dt) {
+        this.radius += 350 * dt; 
+        this.life -= dt * 1.5; 
+        if (this.life > 0) {
+            let savedCount = 0, perfectCount = 0;
+            for (let e of entities) {
+                if (this.hitEntities.has(e)) continue;
+                let dx = e.x - this.x, dy = e.y - this.y;
+                let dist = Math.sqrt(dx*dx + dy*dy);
+                if (dist < this.radius) {
+                    this.hitEntities.add(e);
+                    if (e.isDead) {
+                        savedCount++; e.isDead = false; e.flashTimer = 0.8;
+                        if (e.deathTime > 2.0 && !this.isChain) {
+                            ripples.push(new Ripple(e.x, e.y, Math.max(2, this.level - 2), true));
+                            createParticles(e.x, e.y, 10, '#3b82f6');
+                        }
+                    } else {
+                        let sinVal = Math.pow(Math.sin(e.theta), 2);
+                        if (sinVal > 0.85) { perfectCount++; e.flashTimer = 0.5; }
+                    }
+                    e.omega = Math.min(e.omega + this.power * 4.0, 15);
+                    if (!e.isDead) e.direction = e.direction * 0.5 + Math.atan2(dy, dx) * 0.5;
+                }
+            }
+            if (perfectCount > 0) {
+                mana = Math.min(100, mana + perfectCount * 1.5);
+                totalScore += perfectCount * 20;
+                floatingTexts.push(new FloatingText(this.x, this.y - this.radius/2, `PERFECT!`, '#fcd34d'));
+            }
+            if (savedCount > 0) {
+                currentCombo += savedCount; comboTimer = 2.0;
+                let pts = savedCount * 10 * Math.max(1, Math.floor(currentCombo / 5));
+                totalScore += pts;
+                floatingTexts.push(new FloatingText(this.x, this.y - this.radius, `+${pts}`, '#fff'));
+                triggerScoreAnim();
+            }
+        }
+    }
+    draw(ctx) {
+        if (this.life <= 0) return;
+        ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, PI * 2);
+        let gradient = ctx.createRadialGradient(this.x, this.y, Math.max(0, this.radius - 30), this.x, this.y, this.radius);
+        if (this.isChain) {
+            gradient.addColorStop(0, `rgba(59, 130, 246, 0)`); gradient.addColorStop(1, `rgba(147, 197, 253, ${this.life})`);
+        } else {
+            gradient.addColorStop(0, `rgba(252, 211, 77, 0)`); gradient.addColorStop(1, `rgba(255, 255, 255, ${this.life})`);
+        }
+        ctx.strokeStyle = gradient; ctx.lineWidth = this.level * 1.5; ctx.stroke();
+    }
+}
+
+class Particle {
+    constructor(x, y, color) {
+        this.x = x; this.y = y; this.color = color; this.life = 1.0;
+        let angle = Math.random() * PI * 2, speed = Math.random() * 200 + 50;
+        this.vx = Math.cos(angle) * speed; this.vy = Math.sin(angle) * speed;
+    }
+    update(dt) { this.x += this.vx * dt; this.y += this.vy * dt; this.vx *= 0.9; this.vy *= 0.9; this.life -= dt * 2; }
+    draw(ctx) { if(this.life<=0) return; ctx.fillStyle = this.color; ctx.globalAlpha = this.life; ctx.fillRect(this.x, this.y, 3, 3); ctx.globalAlpha = 1.0; }
+}
+
+class FloatingText {
+    constructor(x, y, text, color) { this.x = x+(Math.random()-0.5)*20; this.y = y; this.text = text; this.color = color; this.life = 1.5; }
+    update(dt) { this.y -= 30 * dt; this.life -= dt; }
+    draw(ctx) {
+        if(this.life<=0) return;
+        ctx.fillStyle = this.color; ctx.globalAlpha = Math.min(1, this.life);
+        ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center'; ctx.fillText(this.text, this.x, this.y); ctx.globalAlpha = 1.0;
+    }
+}
+
+// -----------------------------------------------------------
+// Logic & Initialization
+// -----------------------------------------------------------
+
+function createParticles(x, y, count, color) { for(let i=0; i<count; i++) particles.push(new Particle(x, y, color)); }
+function triggerScoreAnim() {
+    uiElems.score.innerText = totalScore;
+    uiElems.score.parentElement.classList.remove('pop-anim');
+    void uiElems.score.parentElement.offsetWidth; 
+    uiElems.score.parentElement.classList.add('pop-anim');
+}
+
+for (let i = 0; i < NUM_ENTITIES; i++) { entities.push(new Entity(i)); }
+
+function detectConstellationsOptimized(activeNodes, adjList) {
+    let visited = new Set();
+    
+    for (let node of activeNodes) {
+        if (!visited.has(node.id) && !node.isConstellation && !node.usedInArchive) {
+            let cluster = [];
+            let stack = [node];
+            visited.add(node.id);
+
+            while (stack.length > 0) {
+                let curr = stack.pop();
+                cluster.push(curr);
+                
+                let neighbors = adjList.get(curr.id);
+                if (neighbors) {
+                    for (let neighbor of neighbors) {
+                        if (!visited.has(neighbor.id) && !neighbor.isConstellation && !neighbor.usedInArchive) {
+                            visited.add(neighbor.id);
+                            stack.push(neighbor);
+                        }
+                    }
+                }
+            }
+
+            if (cluster.length >= CLUSTER_THRESHOLD) {
+                registerConstellation(cluster, adjList);
+                break; 
+            }
+        }
+    }
+}
+
+function registerConstellation(cluster, adjList) {
+    constellationCooldown = 5.0; 
+
+    let cx = 0, cy = 0;
+    cluster.forEach(n => {
+        n.isConstellation = true;
+        n.usedInArchive = true; 
+        n.constellationTimer = 4.0; 
+        n.omega += 5.0; 
+        cx += n.x; cy += n.y;
+        createParticles(n.x, n.y, 5, '#60a5fa');
+    });
+    cx /= cluster.length;
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    cluster.forEach(n => {
+        if(n.x < minX) minX = n.x; if(n.x > maxX) maxX = n.x;
+        if(n.y < minY) minY = n.y; if(n.y > maxY) maxY = n.y;
+    });
+    
+    let padding = 30;
+    let w = (maxX - minX) + padding*2;
+    let h = (maxY - minY) + padding*2;
+    
+    let tCanvas = document.createElement('canvas');
+    tCanvas.width = w; tCanvas.height = h;
+    let tCtx = tCanvas.getContext('2d');
+    
+    tCtx.fillStyle = '#050a15';
+    tCtx.fillRect(0, 0, w, h);
+    
+    tCtx.strokeStyle = 'rgba(252, 211, 77, 0.8)';
+    tCtx.lineWidth = 2;
+    let drawnEdges = new Set();
+    cluster.forEach(n => {
+        let neighbors = adjList.get(n.id) || [];
+        neighbors.forEach(neighbor => {
+            if (cluster.includes(neighbor)) {
+                let edgeId = n.id < neighbor.id ? `${n.id}-${neighbor.id}` : `${neighbor.id}-${n.id}`;
+                if(!drawnEdges.has(edgeId)) {
+                    drawnEdges.add(edgeId);
+                    tCtx.beginPath();
+                    tCtx.moveTo(n.x - minX + padding, n.y - minY + padding);
+                    tCtx.lineTo(neighbor.x - minX + padding, neighbor.y - minY + padding);
+                    tCtx.stroke();
+                }
+            }
+        });
+    });
+    
+    tCtx.fillStyle = '#fff';
+    cluster.forEach(n => {
+        tCtx.beginPath();
+        tCtx.arc(n.x - minX + padding, n.y - minY + padding, 4, 0, PI*2);
+        tCtx.fill();
+    });
+
+    let dataUrl = tCanvas.toDataURL();
+    let name = `Asterism-${Math.floor(Math.random()*9000)+1000}`;
+    
+    if (discoveredConstellations.length >= MAX_ARCHIVE) {
+        discoveredConstellations.shift(); 
+        let firstCard = uiElems.grid.querySelector('.constellation-card');
+        if (firstCard) {
+            uiElems.grid.removeChild(firstCard);
+        }
+    }
+
+    discoveredConstellations.push({ name: name, stars: cluster.length, image: dataUrl });
+
+    uiElems.emptyText.style.display = 'none';
+    let card = document.createElement('div');
+    card.className = 'constellation-card pop-anim';
+    card.innerHTML = `
+        <img src="${dataUrl}" alt="${name}">
+        <div class="text-xs text-blue-300 font-bold mt-2">${name}</div>
+        <div class="text-[10px] text-gray-400">${cluster.length} Stars Connected</div>
+    `;
+    uiElems.grid.appendChild(card);
+    uiElems.constellationCount.innerText = discoveredConstellations.length;
+
+    if (!isUiHidden) {
+        uiElems.alert.classList.remove('opacity-0');
+        setTimeout(() => uiElems.alert.classList.add('opacity-0'), 3000);
+    }
+    
+    totalScore += cluster.length * 100;
+    triggerScoreAnim();
+    floatingTexts.push(new FloatingText(cx, cy, `NEW CONSTELLATION!`, '#60a5fa'));
+    screenShake = 10;
+}
+
+// -----------------------------------------------------------
+// Main Loop
+// -----------------------------------------------------------
+let lastTime = performance.now();
+let evalTimer = 0;
+let detectTimer = 0;
+
+function loop(currentTime) {
+    let dt = (currentTime - lastTime) / 1000;
+    if (dt > 0.1) dt = 0.1; 
+    lastTime = currentTime;
+
+    evalTimer += dt;
+    if (evalTimer > 1.0) {
+        let deadCount = 0;
+        entities.forEach(e => { if (e.isDead) deadCount++; });
+        let score = Math.floor(((NUM_ENTITIES - deadCount) / NUM_ENTITIES) * 100);
+        uiElems.harmony.innerText = `${score}%`;
+        uiElems.harmony.className = `text-lg md:text-4xl font-black font-mono ${score < 50 ? 'text-red-500' : 'text-yellow-400'}`;
+        evalTimer = 0;
+    }
+
+    if(comboTimer > 0) {
+        comboTimer -= dt;
+        if(comboTimer <= 0) currentCombo = 0;
+    }
+    if(currentCombo >= 5) {
+        uiElems.comboBox.classList.remove('hidden');
+        uiElems.comboMult.innerText = Math.floor(currentCombo / 5) + 1;
+    } else {
+        uiElems.comboBox.classList.add('hidden');
+    }
+
+    mana = Math.min(100, mana + 1.5 * dt);
+    uiElems.manaBar.style.width = `${mana}%`;
+    uiElems.manaText.innerText = Math.floor(mana);
+    uiElems.manaBar.style.background = mana < 20 ? 'red' : 'linear-gradient(90deg, #3b82f6, #8b5cf6, #fcd34d)';
+
+    if (constellationCooldown > 0) {
+        constellationCooldown -= dt;
+    }
+
+    ctx.fillStyle = 'rgba(2, 4, 10, 0.4)'; 
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.save();
+    if(screenShake > 0) {
+        ctx.translate((Math.random()-0.5)*screenShake, (Math.random()-0.5)*screenShake);
+        screenShake *= 0.8;
+        if(screenShake < 0.5) screenShake = 0;
+    }
+
+    ctx.globalCompositeOperation = 'lighter';
+
+    let activeNodes = entities.filter(e => !e.isDead && (e.omega > 6.0 || e.isConstellation));
+    
+    let grid = new Map();
+    for (let node of activeNodes) {
+        let cx = Math.floor(node.x / CELL_SIZE);
+        let cy = Math.floor(node.y / CELL_SIZE);
+        let key = (cx << 16) | (cy & 0xFFFF);
+        if (!grid.has(key)) grid.set(key, []);
+        grid.get(key).push(node);
+        node.gridX = cx;
+        node.gridY = cy;
+    }
+
+    detectTimer += dt;
+    let buildAdjList = false;
+    let adjList = new Map();
+    if (detectTimer > 0.2) {
+        buildAdjList = true;
+        activeNodes.forEach(node => adjList.set(node.id, []));
+    }
+
+    for (let i = 0; i < activeNodes.length; i++) {
+        let a = activeNodes[i];
+        
+        for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+                let key = ((a.gridX + dx) << 16) | ((a.gridY + dy) & 0xFFFF);
+                let cell = grid.get(key);
+                
+                if (cell) {
+                    for (let b of cell) {
+                        if (a.id < b.id) { 
+                            let distSq = (a.x-b.x)*(a.x-b.x) + (a.y-b.y)*(a.y-b.y);
+                            if (distSq < LINK_DIST_SQ) {
+                                if (buildAdjList) {
+                                    adjList.get(a.id).push(b);
+                                    adjList.get(b.id).push(a);
+                                }
+
+                                let alpha = (LINK_DIST_SQ - distSq) / LINK_DIST_SQ;
+                                ctx.beginPath();
+                                ctx.moveTo(a.x, a.y);
+                                ctx.lineTo(b.x, b.y);
+                                
+                                if (a.isConstellation && b.isConstellation) {
+                                    ctx.strokeStyle = `rgba(147, 197, 253, ${alpha})`;
+                                    ctx.lineWidth = 2.5;
+                                } else {
+                                    ctx.strokeStyle = `rgba(252, 211, 77, ${alpha * 0.8})`;
+                                    ctx.lineWidth = 1.0;
+                                }
+                                ctx.stroke();
+
+                                if (a.isConstellation && b.isConstellation) {
+                                    ctx.strokeStyle = `rgba(96, 165, 250, ${alpha * 0.3})`;
+                                    ctx.lineWidth = 6;
+                                    ctx.stroke();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (buildAdjList) {
+        if (constellationCooldown <= 0) {
+            detectConstellationsOptimized(activeNodes, adjList);
+        }
+        detectTimer = 0;
+    }
+
+    entities.forEach(e => { e.update(dt); e.draw(ctx); });
+    
+    for (let i = ripples.length - 1; i >= 0; i--) {
+        ripples[i].update(dt); ripples[i].draw(ctx);
+        if (ripples[i].life <= 0) ripples.splice(i, 1);
+    }
+    for(let i=particles.length-1; i>=0; i--) {
+        particles[i].update(dt); particles[i].draw(ctx);
+        if(particles[i].life <= 0) particles.splice(i,1);
+    }
+    for(let i=floatingTexts.length-1; i>=0; i--) {
+        floatingTexts[i].update(dt); floatingTexts[i].draw(ctx);
+        if(floatingTexts[i].life <= 0) floatingTexts.splice(i,1);
+    }
+
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.restore(); 
+    requestAnimationFrame(loop);
+}
+
+// -----------------------------------------------------------
+// UI & Input Events
+// -----------------------------------------------------------
+
+uiElems.openBtn.addEventListener('click', () => uiElems.modal.classList.add('active'));
+uiElems.closeBtn.addEventListener('click', () => uiElems.modal.classList.remove('active'));
+
+uiElems.toggleBtn.addEventListener('click', () => {
+    isUiHidden = !isUiHidden;
+    if (isUiHidden) {
+        uiElems.topUi.classList.add('opacity-0', '-translate-y-4');
+        uiElems.bottomUi.classList.add('opacity-0', 'translate-y-4');
+        uiElems.eyeOpen.classList.add('hidden');
+        uiElems.eyeClosed.classList.remove('hidden');
+    } else {
+        uiElems.topUi.classList.remove('opacity-0', '-translate-y-4');
+        uiElems.bottomUi.classList.remove('opacity-0', 'translate-y-4');
+        uiElems.eyeOpen.classList.remove('hidden');
+        uiElems.eyeClosed.classList.add('hidden');
+    }
+});
+
+// Canvasへの直接タッチでのみ波紋を発生させる
+canvas.addEventListener('pointerdown', (e) => {
+    let vel = parseInt(uiElems.slider.value);
+    let manaCost = vel * 2.5;
+    
+    if (mana >= manaCost) {
+        mana -= manaCost;
+        ripples.push(new Ripple(e.clientX, e.clientY, vel));
+        if (navigator.vibrate) navigator.vibrate(vel * 10);
+    } else {
+        if (!isUiHidden) {
+            uiElems.manaBar.parentElement.classList.add('pop-anim');
+            setTimeout(() => uiElems.manaBar.parentElement.classList.remove('pop-anim'), 400);
+        }
+        floatingTexts.push(new FloatingText(e.clientX, e.clientY, "NO MANA", "#ef4444"));
+    }
+});
+
+requestAnimationFrame(loop);
+
+</script>
+</body>
+</html>
