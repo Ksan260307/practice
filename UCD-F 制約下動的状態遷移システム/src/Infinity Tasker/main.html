@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>インフィニティ・タスク</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Global Styles & Scrollbar (ライトテーマ向け) */
+    body { background-color: #f8fafc; } /* slate-50 */
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 8px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: rgba(241, 245, 249, 0.8); /* slate-100 */
+      border-radius: 4px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: rgba(203, 213, 225, 1); /* slate-300 */
+      border-radius: 4px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+      background: rgba(148, 163, 184, 1); /* slate-400 */
+    }
+    .hide-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+  </style>
+</head>
+<body class="min-h-screen text-slate-800 font-sans p-4 md:p-8 flex justify-center">
+
+  <div class="w-full max-w-4xl flex flex-col gap-6">
+    
+    <!-- Header / Stats -->
+    <header class="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 border-b border-slate-200 pb-6">
+      <div>
+        <h1 class="text-3xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
+          <!-- Layers Icon -->
+          <svg class="text-indigo-500 w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+          インフィニティ・タスク
+        </h1>
+        <p class="text-sm text-slate-500 mt-1">
+          超大量データ対応 タスク管理システム (ライト版)
+        </p>
+      </div>
+      
+      <div class="flex gap-4 text-sm font-mono bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
+        <div class="flex flex-col items-center px-3">
+          <span class="text-slate-400 text-xs font-bold">最大容量</span>
+          <span id="stat-pool" class="text-indigo-500 font-bold">1,000,000</span>
+        </div>
+        <div class="flex flex-col items-center px-3 border-l border-slate-100">
+          <span class="text-slate-400 text-xs font-bold">進行中</span>
+          <span id="stat-active" class="text-emerald-500 font-bold">0</span>
+        </div>
+        <div class="flex flex-col items-center px-3 border-l border-slate-100">
+          <span class="text-slate-400 text-xs font-bold">完了済</span>
+          <span id="stat-done" class="text-slate-500 font-bold">0</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Action Input -->
+    <div class="flex gap-2">
+      <form id="add-form" class="flex-1 flex gap-2">
+        <input
+          type="text"
+          id="task-input"
+          placeholder="新しいタスクを入力してください..."
+          class="flex-1 bg-white border border-slate-300 rounded-lg px-4 py-3 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition-colors placeholder-slate-400 shadow-sm"
+        />
+        <button
+          type="submit"
+          class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-lg font-medium transition-colors flex items-center gap-2 shadow-sm"
+        >
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+          <span class="hidden sm:inline">追加</span>
+        </button>
+      </form>
+      <button
+        id="btn-bulk"
+        class="bg-white hover:bg-slate-50 text-slate-600 px-4 py-3 rounded-lg transition-colors flex items-center gap-2 border border-slate-300 shadow-sm"
+        title="5000件のタスクを自動生成"
+      >
+        <svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+        <span class="hidden sm:inline text-sm font-medium">大量生成</span>
+      </button>
+    </div>
+
+    <!-- Task List (Virtual Scroll Container) -->
+    <div class="relative bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col">
+      <!-- List Header -->
+      <div class="grid grid-cols-12 gap-4 px-6 py-3 border-b border-slate-200 text-xs font-bold text-slate-500 bg-slate-50/90 backdrop-blur z-10 relative">
+        <div class="col-span-6 md:col-span-7">タスク名</div>
+        <div class="col-span-3 md:col-span-2 text-center">優先度</div>
+        <div class="col-span-2 md:col-span-2 text-center hidden md:block" title="放置していると徐々に溜まります">放置ゲージ</div>
+        <div class="col-span-3 md:col-span-1 text-right">操作</div>
+      </div>
+
+      <!-- Virtual Scroll Viewport -->
+      <div id="scroll-container" class="overflow-y-auto scroll-smooth custom-scrollbar relative bg-slate-50/30" style="height: 600px;">
+        <!-- Height spacer for scrollbar -->
+        <div id="scroll-spacer" style="width: 1px; height: 0px; position: absolute; top: 0; left: 0;"></div>
+        <!-- Actual visible content rendered here -->
+        <div id="scroll-content" class="w-full absolute top-0 left-0">
+            <!-- DOM pool elements will be injected here by JS -->
+        </div>
+        
+        <!-- Empty State -->
+        <div id="empty-state" class="absolute inset-0 flex-col items-center justify-center text-slate-400 space-y-4 pointer-events-none flex">
+          <div class="bg-white p-6 rounded-full shadow-sm border border-slate-100 mb-2">
+            <svg class="w-12 h-12 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
+          </div>
+          <p class="text-lg font-medium text-slate-500">進行中のタスクはありません</p>
+          <p class="text-sm">上の入力欄から新しいタスクを追加してください。</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer / Terrain (死骸の地形化) -->
+    <div class="bg-white border border-slate-200 rounded-xl p-6 relative overflow-hidden shadow-sm">
+      <div class="absolute inset-0 opacity-10 flex flex-col justify-end">
+         <div id="terrain-bg" class="bg-emerald-400 w-full transition-all duration-1000 ease-out" style="height: 0%;"></div>
+      </div>
+      <div class="relative z-10 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <svg class="text-emerald-500 w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path></svg>
+          <h3 class="font-bold text-slate-700">全体の進捗状況</h3>
+        </div>
+        <div id="entropy-text" class="text-sm font-mono text-slate-500 bg-slate-50 px-3 py-1 rounded-md border border-slate-100">
+           0 / 0 完了 (0.0%)
+        </div>
+      </div>
+      <div class="relative z-10 w-full h-3 bg-slate-100 border border-slate-200 rounded-full mt-4 overflow-hidden">
+         <div id="entropy-bar" class="h-full bg-gradient-to-r from-emerald-400 to-emerald-300 transition-all duration-500" style="width: 0%;"></div>
+      </div>
+    </div>
+
+  </div>
+
+<script>
+// ============================================================================
+// UCD-F Core System [Internal Logic Only]
+// Vanilla JS Edition: Extreme Performance via Zero-Allocation DOM Pool
+// ============================================================================
+
+// --- 1. Memory Layout (Fixed-length Pool / Zero-Allocation) ---
+const MAX_ENTITIES = 1000000;
+const ITEM_HEIGHT = 68;
+const VIEWPORT_HEIGHT = 600;
+
+// Bit-packed SoA
+const stateBuffer = new Uint32Array(MAX_ENTITIES);
+const textBuffer = new Array(MAX_ENTITIES).fill('');
+const activeIndexBuffer = new Int32Array(MAX_ENTITIES);
+
+let activeCount = 0;
+let doneCount = 0;
+let globalHead = 0;
+
+// --- Bitwise Operations (SoA Accessors) ---
+const encodeState = (importance, urgency, progress, state, fatigue) => {
+  return (importance & 0x3) |
+    ((urgency & 0x3) << 2) |
+    ((progress & 0x7) << 4) |
+    ((state & 0x7) << 7) |
+    ((fatigue & 0x1f) << 10);
+};
+
+const decodeState = (val) => ({
+  importance: val & 0x3,
+  urgency: (val >> 2) & 0x3,
+  progress: (val >> 4) & 0x7,
+  state: (val >> 7) & 0x7,
+  fatigue: (val >> 10) & 0x1f,
+});
+
+const updateFatigue = (id, newFatigue) => {
+  const val = stateBuffer[id];
+  stateBuffer[id] = (val & ~(0x1f << 10)) | ((newFatigue & 0x1f) << 10);
+};
+
+const updateStateFlag = (id, newState) => {
+  const val = stateBuffer[id];
+  stateBuffer[id] = (val & ~(0x7 << 7)) | ((newState & 0x7) << 7);
+};
+
+// --- Action Emitters ---
+const spawnTask = (name, importance, urgency) => {
+  if (globalHead >= MAX_ENTITIES) return;
+  const id = globalHead++;
+  stateBuffer[id] = encodeState(importance, urgency, 0, 0, 0);
+  textBuffer[id] = name;
+  activeIndexBuffer[activeCount++] = id;
+};
+
+// ============================================================================
+// View Adapter / DOM Controller (Zero-Allocation DOM Manipulation)
+// ============================================================================
+
+// DOM Elements
+const scrollContainer = document.getElementById('scroll-container');
+const scrollSpacer = document.getElementById('scroll-spacer');
+const scrollContent = document.getElementById('scroll-content');
+const emptyState = document.getElementById('empty-state');
+const statActive = document.getElementById('stat-active');
+const statDone = document.getElementById('stat-done');
+const terrainBg = document.getElementById('terrain-bg');
+const entropyText = document.getElementById('entropy-text');
+const entropyBar = document.getElementById('entropy-bar');
+
+// DOM Pool for Virtual Scroll (Viewport height + buffer)
+const poolSize = Math.ceil(VIEWPORT_HEIGHT / ITEM_HEIGHT) + 4;
+const domPool = [];
+
+// Pre-create DOM elements (Object pooling to prevent layout thrashing/GC)
+for (let i = 0; i < poolSize; i++) {
+  const el = document.createElement('div');
+  el.className = "task-row absolute w-full px-4 hidden";
+  el.style.height = `${ITEM_HEIGHT}px`;
+  
+  el.innerHTML = `
+    <div class="flex items-center h-full grid grid-cols-12 gap-4 px-3 py-3 bg-white hover:bg-slate-50 rounded-lg border border-slate-200 transition-colors group shadow-sm">
+      <!-- Name & Importance -->
+      <div class="col-span-6 md:col-span-7 flex items-center gap-3 truncate">
+        <svg class="task-icon shrink-0 w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path></svg>
+        <span class="task-name text-slate-800 font-bold truncate"></span>
+        <span class="task-id text-xs text-slate-400 font-mono hidden lg:inline bg-slate-100 px-1.5 py-0.5 rounded"></span>
+      </div>
+
+      <!-- Urgency -->
+      <div class="col-span-3 md:col-span-2 flex items-center justify-center">
+        <span class="task-urgency text-xs px-2.5 py-1 rounded-md font-bold border"></span>
+      </div>
+
+      <!-- Fatigue (RuinScore) -->
+      <div class="col-span-2 md:col-span-2 hidden md:flex items-center justify-center gap-2 w-full">
+        <div class="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden flex border border-slate-200 shadow-inner">
+          <div class="task-fatigue-bar h-full transition-all duration-300"></div>
+        </div>
+      </div>
+
+      <!-- Action -->
+      <div class="col-span-3 md:col-span-1 flex items-center justify-end">
+        <button class="complete-btn text-slate-300 hover:text-emerald-600 bg-slate-50 hover:bg-emerald-50 p-2 rounded-full border border-slate-200 hover:border-emerald-200 transition-all opacity-80 group-hover:opacity-100" title="完了にする">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+        </button>
+      </div>
+    </div>
+  `;
+  
+  scrollContent.appendChild(el);
+  
+  // Cache DOM node references to avoid querySelector during scroll
+  domPool.push({
+    root: el,
+    iconNode: el.querySelector('.task-icon'),
+    nameNode: el.querySelector('.task-name'),
+    idNode: el.querySelector('.task-id'),
+    urgencyNode: el.querySelector('.task-urgency'),
+    fatigueBarNode: el.querySelector('.task-fatigue-bar'),
+    btnNode: el.querySelector('.complete-btn')
+  });
+}
+
+// --- Style Helpers ---
+const importanceColors = ['text-slate-400', 'text-blue-500', 'text-amber-500', 'text-rose-500'];
+const urgencyStyles = [
+  { t: '低', c: 'bg-slate-50 text-slate-600 border-slate-200' },
+  { t: '中', c: 'bg-blue-50 text-blue-700 border-blue-200' },
+  { t: '高', c: 'bg-amber-50 text-amber-700 border-amber-200' },
+  { t: '緊急', c: 'bg-rose-50 text-rose-700 border-rose-200' },
+];
+
+// --- Render Pipeline ---
+const updateStats = () => {
+  statActive.textContent = activeCount.toLocaleString();
+  statDone.textContent = doneCount.toLocaleString();
+  
+  const ratio = globalHead > 0 ? (doneCount / globalHead) : 0;
+  const pct = (ratio * 100).toFixed(1);
+  
+  terrainBg.style.height = `${Math.min(100, ratio * 100)}%`;
+  entropyBar.style.width = `${ratio * 100}%`;
+  entropyText.textContent = `${doneCount} / ${globalHead} 完了 (${pct}%)`;
+  
+  if (activeCount === 0) {
+    emptyState.classList.remove('hidden');
+    emptyState.classList.add('flex');
+  } else {
+    emptyState.classList.add('hidden');
+    emptyState.classList.remove('flex');
+  }
+};
+
+const renderViewport = () => {
+  const scrollTop = scrollContainer.scrollTop;
+  // Schrödinger's Culling: Calculate visible range
+  const startIndex = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - 2);
+  const endIndex = Math.min(activeCount - 1, startIndex + poolSize - 1);
+
+  // Update total scrollable height
+  scrollSpacer.style.height = `${activeCount * ITEM_HEIGHT}px`;
+
+  // Update DOM pool elements
+  for (let i = 0; i < poolSize; i++) {
+    const dataIndex = startIndex + i;
+    const dom = domPool[i];
+
+    if (dataIndex < activeCount) {
+      const id = activeIndexBuffer[dataIndex];
+      const data = decodeState(stateBuffer[id]);
+      
+      dom.root.classList.remove('hidden');
+      dom.root.style.transform = `translateY(${dataIndex * ITEM_HEIGHT}px)`;
+      dom.root.dataset.index = dataIndex; // Store array index for click handler
+
+      // Direct text update (fastest)
+      if (dom.nameNode.textContent !== textBuffer[id]) {
+        dom.nameNode.textContent = textBuffer[id];
+      }
+      dom.idNode.textContent = `ID:${id.toString(16).padStart(5, '0').toUpperCase()}`;
+
+      // Styling updates
+      dom.iconNode.className = `task-icon shrink-0 w-5 h-5 ${importanceColors[data.importance]}`;
+      
+      const urg = urgencyStyles[data.urgency];
+      dom.urgencyNode.textContent = urg.t;
+      dom.urgencyNode.className = `task-urgency text-xs px-2.5 py-1 rounded-md font-bold border ${urg.c}`;
+
+      const fatiguePct = (data.fatigue / 31) * 100;
+      dom.fatigueBarNode.style.width = `${fatiguePct}%`;
+      dom.fatigueBarNode.className = `task-fatigue-bar h-full transition-all duration-300 ${
+        data.fatigue > 20 ? 'bg-rose-500' : data.fatigue > 10 ? 'bg-amber-500' : 'bg-blue-400'
+      }`;
+    } else {
+      dom.root.classList.add('hidden');
+    }
+  }
+};
+
+// --- Time Dilation Engine (Local Physics) ---
+let lastTime = performance.now();
+const gameLoop = (time) => {
+  if (time - lastTime > 1000) {
+    lastTime = time;
+    
+    // Only process entities currently visible in the DOM pool
+    const scrollTop = scrollContainer.scrollTop;
+    const startIndex = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - 2);
+    const endIndex = Math.min(activeCount - 1, startIndex + poolSize - 1);
+    
+    let stateChanged = false;
+    for (let i = startIndex; i <= endIndex; i++) {
+      const id = activeIndexBuffer[i];
+      const data = decodeState(stateBuffer[id]);
+      
+      const fatigueSpeed = (data.importance + data.urgency + 1) * 0.5;
+      if (data.state === 0 && data.fatigue < 31 && Math.random() < 0.3 * fatigueSpeed) {
+        updateFatigue(id, data.fatigue + 1);
+        stateChanged = true;
+      }
+    }
+    
+    if (stateChanged) renderViewport();
+  }
+  requestAnimationFrame(gameLoop);
+};
+
+// --- Interactions ---
+document.getElementById('add-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const input = document.getElementById('task-input');
+  if (!input.value.trim()) return;
+  
+  spawnTask(input.value.trim(), Math.floor(Math.random() * 3) + 1, Math.floor(Math.random() * 3) + 1);
+  input.value = '';
+  updateStats();
+  renderViewport();
+});
+
+document.getElementById('btn-bulk').addEventListener('click', () => {
+  for (let i = 0; i < 5000; i++) {
+    spawnTask(`自動生成タスク ${globalHead}`, Math.floor(Math.random() * 4), Math.floor(Math.random() * 4));
+  }
+  updateStats();
+  renderViewport();
+});
+
+// Event Delegation for Complete Button (Zero-allocation listener)
+scrollContent.addEventListener('click', (e) => {
+  const btn = e.target.closest('.complete-btn');
+  if (btn) {
+    const row = btn.closest('.task-row');
+    const indexInActive = parseInt(row.dataset.index, 10);
+    
+    const id = activeIndexBuffer[indexInActive];
+    updateStateFlag(id, 1); // Zero-Lock
+    
+    // Shift buffer left (fastest way in TypedArray)
+    activeIndexBuffer.copyWithin(indexInActive, indexInActive + 1, activeCount);
+    activeCount--;
+    doneCount++;
+    
+    updateStats();
+    renderViewport();
+  }
+});
+
+scrollContainer.addEventListener('scroll', () => {
+  // Use simple throttling via rAF for ultra-smooth scroll sync
+  requestAnimationFrame(renderViewport);
+});
+
+// --- Boot Sequence ---
+const initSystem = () => {
+  // デフォルトタスクの生成を削除。初期状態は0件でスタートします。
+  updateStats();
+  renderViewport();
+  requestAnimationFrame(gameLoop);
+};
+
+// Fire up the simulation
+initSystem();
+
+</script>
+</body>
+</html>
