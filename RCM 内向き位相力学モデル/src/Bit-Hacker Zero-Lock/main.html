@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bit-Hacker: Zero-Lock (Overdrive Edition)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @keyframes shake {
+            0%, 100% { transform: translate(0, 0) rotate(0deg); }
+            20% { transform: translate(-2px, 2px) rotate(-1deg); }
+            40% { transform: translate(2px, -2px) rotate(1deg); }
+            60% { transform: translate(-2px, -2px) rotate(-1deg); }
+            80% { transform: translate(2px, 2px) rotate(1deg); }
+        }
+        .shake-intense { animation: shake 0.2s infinite; }
+        
+        @keyframes floatUp {
+            0% { transform: translate(-50%, -50%) scale(0.5); opacity: 0; }
+            20% { transform: translate(-50%, -80%) scale(1.2); opacity: 1; }
+            100% { transform: translate(-50%, -150%) scale(1); opacity: 0; }
+        }
+        .floating-text {
+            position: absolute;
+            animation: floatUp 0.8s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+            pointer-events: none;
+            font-weight: 900;
+            text-shadow: 0 0 10px currentColor, 0 2px 4px rgba(0,0,0,0.8);
+            z-index: 50;
+        }
+
+        @keyframes flash {
+            0% { background-color: var(--flash-color); opacity: 1; }
+            100% { background-color: var(--flash-color); opacity: 0; }
+        }
+        .flash-effect {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 40;
+            animation: flash 0.4s ease-out forwards;
+        }
+
+        /* セルの物理移動用トランジション */
+        .cell-wrapper {
+            position: absolute;
+            width: 12.5%;
+            height: 12.5%;
+            transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s ease, transform 0.2s ease;
+        }
+
+        .cell-inner {
+            transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        @keyframes comboPop {
+            0% { transform: translate(-50%, -50%) scale(0.5) rotate(-10deg); opacity: 0; }
+            50% { transform: translate(-50%, -50%) scale(1.3) rotate(5deg); opacity: 1; }
+            100% { transform: translate(-50%, -50%) scale(1) rotate(0deg); opacity: 1; }
+        }
+        .combo-animate {
+            animation: comboPop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+        
+        .cursor-crosshair { cursor: crosshair; }
+    </style>
+</head>
+<body id="body-container" class="min-h-screen bg-gray-950 text-cyan-400 font-mono p-4 sm:p-8 flex flex-col items-center justify-center overflow-hidden transition-colors duration-500">
+    
+    <!-- Audio Context Enabler (Overlay) -->
+    <div id="start-overlay" class="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/90 backdrop-blur-sm cursor-pointer" onclick="initSystem()">
+        <div class="text-center animate-pulse">
+            <h2 class="text-4xl font-black text-cyan-400 mb-4 tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-600">SYSTEM INITIALIZE</h2>
+            <p class="text-gray-400">>> CLICK ANYWHERE TO ENGAGE <<</p>
+            <p class="text-red-500 text-xs mt-4">SOUND ENABLED</p>
+        </div>
+    </div>
+
+    <!-- Header & Dashboard -->
+    <div class="w-full max-w-2xl mb-4 relative z-10">
+        <div class="flex justify-between items-end border-b border-cyan-500/30 pb-2 mb-4">
+            <h1 class="text-3xl font-black italic text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-indigo-500 drop-shadow-[0_0_10px_rgba(6,182,212,0.8)]">NEXUS DRIFT</h1>
+            <div id="ui-combo-multiplier" class="text-yellow-400 font-bold hidden">COMBO MULTIPLIER ACTIVE!</div>
+        </div>
+        
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-2">
+            <!-- F: Output -->
+            <div class="bg-gray-900 border-2 border-cyan-500/50 p-2 sm:p-3 rounded-lg shadow-[0_0_20px_rgba(6,182,212,0.2)] relative overflow-hidden">
+                <div class="text-xs text-cyan-400 mb-1 font-bold tracking-wider">SYSTEM OUTPUT (F)</div>
+                <div id="ui-output" class="text-2xl sm:text-3xl font-black text-white drop-shadow-[0_0_5px_rgba(255,255,255,0.5)]">0</div>
+            </div>
+            
+            <!-- V: Speed -->
+            <div class="bg-gray-900 border-2 border-yellow-500/50 p-2 sm:p-3 rounded-lg shadow-[0_0_20px_rgba(234,179,8,0.2)]">
+                <div class="text-xs text-yellow-400 mb-1 font-bold tracking-wider">PROCESS SPEED (V)</div>
+                <div id="ui-speed" class="text-2xl sm:text-3xl font-black text-white drop-shadow-[0_0_5px_rgba(255,255,255,0.5)]">x1.00</div>
+            </div>
+
+            <!-- Q: Heat -->
+            <div id="heat-container" class="bg-gray-900 border-2 border-red-500/50 p-2 sm:p-3 rounded-lg shadow-[0_0_20px_rgba(239,68,68,0.2)] transition-all">
+                <div id="heat-label" class="text-xs text-red-400 mb-1 font-bold tracking-wider">THERMAL LOAD (Q)</div>
+                <div class="flex items-center gap-2">
+                    <div class="flex-grow h-6 bg-gray-950 rounded border border-gray-700 overflow-hidden relative">
+                        <div id="heat-bar" class="h-full bg-gradient-to-r from-green-500 via-yellow-500 to-red-500 transition-all duration-300" style="width: 0%;"></div>
+                        <div class="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0)_50%,rgba(0,0,0,0.2)_50%)] bg-[length:100%_4px] pointer-events-none"></div>
+                    </div>
+                    <div id="ui-heat" class="text-xl font-black text-white w-14 text-right">0%</div>
+                </div>
+            </div>
+            
+            <!-- Syringe Stock UI -->
+            <div id="syringe-container" class="col-span-1 sm:col-span-3 bg-gray-900 border-2 border-indigo-500/50 p-2 rounded-lg shadow-[0_0_15px_rgba(99,102,241,0.2)] flex justify-between items-center cursor-pointer transition-all hover:brightness-125" onclick="toggleSyringeMode()">
+                <div class="flex items-center">
+                    <div class="text-xs text-indigo-400 font-bold tracking-wider">ANTI-VIRUS SYRINGE</div>
+                    <div id="syringe-hint" class="text-gray-500 text-[10px] ml-2">(3 COMBO TO UNLOCK)</div>
+                </div>
+                <div class="flex gap-2 text-xl sm:text-2xl" id="syringe-slots">
+                    <!-- Slots injected here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Grid Area -->
+    <div id="game-area" class="relative z-10 select-none w-full max-w-[500px]">
+        
+        <!-- Combo Display Overlay -->
+        <div id="combo-display" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-50 pointer-events-none opacity-0 transition-opacity duration-300">
+            <div class="text-6xl sm:text-8xl font-black text-transparent bg-clip-text bg-gradient-to-b from-yellow-300 via-red-500 to-purple-600 italic drop-shadow-[0_0_20px_rgba(255,0,0,1)] whitespace-nowrap">
+                <span id="combo-count" class="text-8xl sm:text-9xl">2</span><span class="text-4xl sm:text-6xl"> HITS!</span>
+            </div>
+        </div>
+
+        <!-- Game Over Overlay -->
+        <div id="game-over-overlay" class="hidden absolute inset-0 z-50 flex flex-col items-center justify-center bg-red-950/90 backdrop-blur-md rounded-xl border-4 border-red-600 shadow-[0_0_50px_rgba(220,38,38,0.8)]">
+            <h2 class="text-5xl font-black text-red-500 mb-2 animate-pulse drop-shadow-[0_0_10px_red]">SYSTEM CRASH</h2>
+            <p class="text-red-300 mb-6 tracking-widest font-bold">>> ZERO-LOCK DETECTED <<</p>
+            <p class="text-gray-400 text-sm mb-1">FINAL CALCULATED OUTPUT</p>
+            <p id="final-output" class="text-white text-4xl font-black mb-8 drop-shadow-[0_0_10px_white]">0</p>
+            <button onclick="handleReboot()" class="px-8 py-3 bg-red-600 hover:bg-red-500 text-white font-black text-xl rounded transition-all shadow-[0_0_20px_rgba(220,38,38,0.6)] hover:shadow-[0_0_30px_rgba(220,38,38,1)] hover:scale-105 active:scale-95">
+                REBOOT SEQUENCE
+            </button>
+        </div>
+
+        <!-- Board Container -->
+        <div class="w-full aspect-square bg-gray-900/80 p-1.5 sm:p-2 rounded-xl shadow-[0_0_30px_rgba(0,0,0,0.8)] border border-gray-700 relative">
+            <div id="board-grid" class="w-full h-full relative">
+                <!-- Absolute positioned cells injected here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Instructions & Logs -->
+    <div class="w-full max-w-2xl mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+        <!-- Logs -->
+        <div id="log-container" class="h-24 text-xs text-cyan-600 overflow-hidden bg-gray-900/80 p-3 rounded border border-cyan-900/50 flex flex-col gap-1 font-mono shadow-inner">
+            <!-- Logs injected here -->
+        </div>
+        
+        <!-- Legend -->
+        <div class="bg-gray-900/80 p-3 rounded border border-gray-800 text-xs text-gray-400">
+            <p class="text-white mb-2 font-bold border-b border-gray-700 pb-1">ENTITY DIRECTORY:</p>
+            <div class="grid grid-cols-2 gap-2">
+                <div class="flex items-center gap-2"><span class="text-cyan-400 font-bold text-lg">◆</span> <span>DATA: Base Score</span></div>
+                <div class="flex items-center gap-2"><span class="text-yellow-400 font-bold text-lg">▲</span> <span>ACCEL: Speed++ / Heat+</span></div>
+                <div class="flex items-center gap-2"><span class="text-indigo-400 font-bold text-lg">■</span> <span>COOL: Heat-- / Speed--</span></div>
+                <div class="flex items-center gap-2"><span class="text-red-500 font-bold text-lg animate-pulse">✖</span> <span class="text-red-300">VIRUS: Mutates over time!</span></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // 1. Audio System
+        // ==========================================
+        let audioCtx;
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+        }
+
+        function playTone(freq, type, duration, vol) {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + duration);
+        }
+
+        function playSwapSound() { playTone(300, 'sine', 0.1, 0.05); playTone(600, 'triangle', 0.1, 0.02); }
+        function playMatchSound(combo) {
+            const baseFreq = 440; 
+            const freq = baseFreq * Math.pow(1.059463094359, combo * 1.5); 
+            playTone(freq, 'square', 0.2, 0.05);
+            playTone(freq * 1.5, 'sine', 0.3, 0.05);
+        }
+        function playVirusKillSound() {
+            playTone(150, 'sawtooth', 0.4, 0.1);
+            playTone(800, 'square', 0.2, 0.1);
+            setTimeout(() => playTone(600, 'sawtooth', 0.4, 0.1), 100);
+        }
+        function playErrorSound() { playTone(200, 'sawtooth', 0.3, 0.1); }
+        function playSyringeAcquireSound() {
+            playTone(600, 'sine', 0.1, 0.1);
+            setTimeout(() => playTone(800, 'sine', 0.1, 0.1), 100);
+            setTimeout(() => playTone(1200, 'sine', 0.3, 0.1), 200);
+        }
+        function playSyringeUseSound() {
+            playTone(1200, 'sawtooth', 0.1, 0.1);
+            playTone(400, 'square', 0.4, 0.1);
+        }
+
+        // ==========================================
+        // 2. コア仕様
+        // ==========================================
+        const BOARD_SIZE = 8;
+        const MAX_HEAT = 100;
+        const BASE_SPEED = 1.0;
+        const MAX_SYRINGES = 1; 
+
+        const ENTITY_TYPES = {
+            CORE: { type: 'CORE', bg: 'bg-gray-800', border: 'border-2 border-cyan-500', shadow: 'shadow-[0_0_10px_rgba(6,182,212,0.4)]', text: 'text-cyan-400', icon: '◆', heatMod: 0.33, speedMod: 0.1, scoreMod: 10 },
+            ACCEL: { type: 'ACCEL', bg: 'bg-gray-800', border: 'border-2 border-yellow-400', shadow: 'shadow-[0_0_10px_rgba(234,179,8,0.4)]', text: 'text-yellow-400', icon: '▲', heatMod: 2.6, speedMod: 0.4, scoreMod: 5 },
+            NULL: { type: 'NULL', bg: 'bg-gray-800', border: 'border-2 border-indigo-500', shadow: 'shadow-[0_0_10px_rgba(99,102,241,0.4)]', text: 'text-indigo-400', icon: '■', heatMod: -5, speedMod: -0.4, scoreMod: 2 },
+            VIRUS: { type: 'VIRUS', bg: 'bg-red-950', border: 'border-2 border-red-500', shadow: 'shadow-[0_0_15px_rgba(220,38,38,0.8)]', text: 'text-red-500', icon: '✖', heatMod: 0, speedMod: 0, scoreMod: 100 }, 
+        };
+
+        let state = {
+            board: [],
+            selectedCell: null,
+            outputF: 0,
+            displayF: 0, 
+            speedV: BASE_SPEED,
+            heatQ: 0,
+            syringes: 0,
+            syringeMode: false,
+            hasUsedSyringeThisTurn: false, 
+            gameState: 'INIT', 
+            logs: [],
+            isProcessing: false 
+        };
+
+        let domMap = new Map();
+        const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+        // ==========================================
+        // 3. ユーティリティ・演出ジェネレータ
+        // ==========================================
+        function getRandomEntity() {
+            const r = Math.random();
+            let entity;
+            if (r < 0.55) entity = ENTITY_TYPES.CORE;
+            else if (r < 0.75) entity = ENTITY_TYPES.ACCEL;
+            else if (r < 0.90) entity = ENTITY_TYPES.NULL;
+            else entity = ENTITY_TYPES.VIRUS;
+            return { ...entity, uid: Math.random().toString(36).substr(2, 9), age: 0, spawnOffset: 0 };
+        }
+
+        function createInitialBoard() {
+            let newBoard = [];
+            for (let r = 0; r < BOARD_SIZE; r++) {
+                let row = [];
+                for (let c = 0; c < BOARD_SIZE; c++) {
+                    let entity;
+                    let isMatch;
+                    do {
+                        isMatch = false;
+                        entity = getRandomEntity();
+                        if (c >= 2 && row[c - 1].type === entity.type && row[c - 2].type === entity.type) isMatch = true;
+                        if (r >= 2 && newBoard[r - 1][c].type === entity.type && newBoard[r - 2][c].type === entity.type) isMatch = true;
+                    } while (isMatch);
+
+                    entity.spawnOffset = BOARD_SIZE; 
+                    row.push(entity);
+                }
+                newBoard.push(row);
+            }
+            return newBoard;
+        }
+
+        function addLog(msg, type='normal') {
+            const time = new Date().toISOString().substring(11, 19);
+            state.logs.unshift({msg: `[${time}] ${msg}`, type});
+            if (state.logs.length > 6) state.logs.pop();
+            renderLogs();
+        }
+
+        function spawnFloatingText(r, c, text, colorClass) {
+            const grid = document.getElementById('board-grid');
+            const cellW = grid.clientWidth / BOARD_SIZE;
+            const cellH = grid.clientHeight / BOARD_SIZE;
+            
+            const el = document.createElement('div');
+            el.className = `floating-text ${colorClass} text-xl sm:text-2xl`;
+            el.textContent = text;
+            
+            el.style.left = `${(c + 0.5) * cellW}px`;
+            el.style.top = `${(r + 0.5) * cellH}px`;
+            
+            grid.appendChild(el);
+            setTimeout(() => el.remove(), 800);
+        }
+
+        function triggerFlash(color='rgba(255,255,255,0.4)') {
+            const area = document.getElementById('game-area');
+            const flash = document.createElement('div');
+            flash.className = 'flash-effect';
+            flash.style.setProperty('--flash-color', color);
+            area.appendChild(flash);
+            setTimeout(() => flash.remove(), 400);
+        }
+
+        function showComboCutin(combo) {
+            const el = document.getElementById('combo-display');
+            const countSpan = document.getElementById('combo-count');
+            countSpan.textContent = combo;
+            
+            el.classList.remove('combo-animate');
+            void el.offsetWidth; 
+            el.classList.add('combo-animate');
+            
+            setTimeout(() => {
+                el.classList.remove('combo-animate');
+                el.style.opacity = '0';
+            }, 1000);
+        }
+
+        function updateScoreAnimation() {
+            if (state.displayF < state.outputF) {
+                const diff = state.outputF - state.displayF;
+                state.displayF += Math.max(1, Math.ceil(diff * 0.15));
+                document.getElementById('ui-output').textContent = state.displayF.toLocaleString();
+            }
+            requestAnimationFrame(updateScoreAnimation);
+        }
+
+        // 落下処理の共通化
+        async function applyGravityAndSpawnAsync(newBoard) {
+            for (let c = 0; c < BOARD_SIZE; c++) {
+                let emptySpots = 0;
+                for (let r = BOARD_SIZE - 1; r >= 0; r--) {
+                    if (newBoard[r][c] === null) {
+                        emptySpots++;
+                    } else if (emptySpots > 0) {
+                        newBoard[r + emptySpots][c] = newBoard[r][c];
+                        newBoard[r][c] = null;
+                    }
+                }
+                for (let r = 0; r < emptySpots; r++) {
+                    let newEntity = getRandomEntity();
+                    newEntity.spawnOffset = emptySpots;
+                    newBoard[r][c] = newEntity;
+                }
+            }
+            state.board = newBoard;
+            render(); 
+            await sleep(350); 
+        }
+
+        // ==========================================
+        // 4. 動的物理ロジック
+        // ==========================================
+        async function resolveMatchesAsync(currentBoard, combo = 1) {
+            let matchSet = new Set();
+            let newBoard = currentBoard.map(row => [...row]);
+
+            for (let r = 0; r < BOARD_SIZE; r++) {
+                for (let c = 0; c < BOARD_SIZE - 2; c++) {
+                    let type = newBoard[r][c]?.type;
+                    if (type && type === newBoard[r][c+1]?.type && type === newBoard[r][c+2]?.type) {
+                        matchSet.add(`${r},${c}`); matchSet.add(`${r},${c+1}`); matchSet.add(`${r},${c+2}`);
+                    }
+                }
+            }
+            for (let r = 0; r < BOARD_SIZE - 2; r++) {
+                for (let c = 0; c < BOARD_SIZE; c++) {
+                    let type = newBoard[r][c]?.type;
+                    if (type && type === newBoard[r+1][c]?.type && type === newBoard[r+2][c]?.type) {
+                        matchSet.add(`${r},${c}`); matchSet.add(`${r+1},${c}`); matchSet.add(`${r+2},${c}`);
+                    }
+                }
+            }
+
+            if (matchSet.size > 0) {
+                // 3連鎖で注射器獲得
+                if (combo === 3 && state.syringes < MAX_SYRINGES) {
+                    state.syringes++;
+                    addLog(">>> PURGE SYRINGE ACQUIRED! <<<", "alert");
+                    playSyringeAcquireSound();
+                    spawnFloatingText(Math.floor(BOARD_SIZE/2), Math.floor(BOARD_SIZE/2), "SYRINGE +1!", "text-indigo-400 font-black scale-150");
+                    renderDashboard(); // すぐにUI更新
+                }
+
+                let addedF = 0, addedV = 0, addedQ = 0;
+                let virusKilled = false;
+
+                const speedMultiplier = state.speedV;
+                const comboMultiplier = Math.pow(1.4, combo - 1); 
+
+                matchSet.forEach(pos => {
+                    const [r, c] = pos.split(',').map(Number);
+                    const entity = newBoard[r][c];
+                    
+                    if (entity) {
+                        if (entity.type === 'VIRUS') virusKilled = true;
+                        
+                        let baseScore = entity.scoreMod;
+                        let finalScore = Math.floor(baseScore * speedMultiplier * comboMultiplier);
+                        addedF += finalScore;
+                        addedV += entity.speedMod;
+                        
+                        addedQ += (entity.type === 'VIRUS' ? -8 : entity.heatMod);
+                        
+                        let colorClass = 'text-white';
+                        if(entity.type === 'VIRUS') colorClass = 'text-red-500 font-black';
+                        else if(entity.type === 'ACCEL') colorClass = 'text-yellow-400';
+                        else if(entity.type === 'NULL') colorClass = 'text-indigo-400';
+
+                        spawnFloatingText(r, c, `+${finalScore}`, colorClass);
+                        newBoard[r][c] = null;
+                    }
+                });
+
+                if (virusKilled) {
+                    playVirusKillSound();
+                    triggerFlash('rgba(239, 68, 68, 0.4)'); 
+                    addLog('>>> VIRUS PURGED. HEAT SINK ACTIVE <<<', 'alert');
+                } else {
+                    playMatchSound(combo);
+                    if (combo >= 3) triggerFlash('rgba(6, 182, 212, 0.3)'); 
+                }
+
+                if (combo > 1) showComboCutin(combo);
+
+                state.board = newBoard;
+                state.outputF += addedF;
+                state.speedV = Math.max(1.0, state.speedV + addedV);
+                state.heatQ = Math.max(0, state.heatQ + addedQ);
+                
+                render(); 
+                await sleep(250); 
+
+                await applyGravityAndSpawnAsync(newBoard);
+                await resolveMatchesAsync(newBoard, combo + 1);
+                return true; 
+            }
+            return false; 
+        }
+
+        function toggleSyringeMode() {
+            if (state.gameState !== 'PLAYING' || state.isProcessing || state.syringes <= 0 || state.hasUsedSyringeThisTurn) {
+                if (state.hasUsedSyringeThisTurn && state.syringes > 0 && !state.syringeMode) {
+                    addLog(">>> SYRINGE ALREADY USED THIS TURN. <<<", "alert");
+                    playErrorSound();
+                }
+                return;
+            }
+            initAudio();
+            state.syringeMode = !state.syringeMode;
+            if (state.syringeMode) {
+                playTone(600, 'sine', 0.1, 0.05);
+                state.selectedCell = null; // スワップ選択を解除
+            } else {
+                playTone(400, 'sine', 0.1, 0.05);
+            }
+            render();
+        }
+
+        async function handleCellClick(r, c) {
+            if (state.gameState !== 'PLAYING' || state.isProcessing) return;
+            initAudio(); 
+
+            // 注射器使用モード
+            if (state.syringeMode) {
+                const cell = state.board[r][c];
+                if (cell && cell.type === 'VIRUS') {
+                    state.isProcessing = true;
+                    
+                    state.syringes--;
+                    state.hasUsedSyringeThisTurn = true; 
+                    state.syringeMode = false; 
+                    
+                    playSyringeUseSound();
+                    triggerFlash('rgba(99, 102, 241, 0.6)');
+                    addLog('>>> TARGET PURGED EXTERNALLY. <<<', 'alert');
+                    
+                    // 特別ボーナス
+                    const bonusScore = Math.floor(1000 * state.speedV);
+                    state.outputF += bonusScore;
+                    state.heatQ = Math.max(0, state.heatQ - 20); // 大幅冷却
+                    
+                    spawnFloatingText(r, c, "PURGED!", "text-indigo-400 font-black scale-150");
+                    
+                    // 破壊
+                    let newBoard = state.board.map(row => [...row]);
+                    newBoard[r][c] = null;
+                    state.board = newBoard;
+                    render();
+                    await sleep(250);
+                    
+                    await applyGravityAndSpawnAsync(newBoard);
+                    
+                    // 連鎖判定
+                    await resolveMatchesAsync(state.board, 1);
+                    
+                    state.isProcessing = false;
+                    checkGameOver();
+                    render();
+                } else {
+                    // ウイルス以外をクリックした場合はエラー音のみ鳴らし、モード維持
+                    playErrorSound();
+                    render();
+                }
+                return;
+            }
+
+            // 通常のスワップモード
+            if (!state.selectedCell) {
+                state.selectedCell = { r, c };
+                playTone(800, 'sine', 0.05, 0.05); 
+                renderBoard();
+            } else {
+                const isAdjacent = 
+                    (Math.abs(state.selectedCell.r - r) === 1 && state.selectedCell.c === c) ||
+                    (Math.abs(state.selectedCell.c - c) === 1 && state.selectedCell.r === r);
+
+                if (isAdjacent) {
+                    state.isProcessing = true;
+                    playSwapSound();
+
+                    // 通常スワップでターンが進むため、注射器の制限をリセット
+                    state.hasUsedSyringeThisTurn = false;
+
+                    const temp = state.board[r][c];
+                    state.board[r][c] = state.board[state.selectedCell.r][state.selectedCell.c];
+                    state.board[state.selectedCell.r][state.selectedCell.c] = temp;
+                    state.selectedCell = null;
+                    
+                    render();
+                    await sleep(250); 
+
+                    let virusPenalty = 0;
+                    let maxAge = 0;
+                    
+                    state.board.forEach(row => row.forEach(cell => { 
+                        if(cell && cell.type === 'VIRUS') {
+                            cell.age = (cell.age || 0) + 1;
+                            virusPenalty += 0.5 + Math.pow(1.4, cell.age) * 0.2; 
+                            if(cell.age > maxAge) maxAge = cell.age;
+                        }
+                    }));
+                    
+                    if (maxAge >= 4 && Math.random() < 0.4) {
+                        addLog("WARNING: VIRUS MUTATION DETECTED. HEAT SPIKING.", "error");
+                    }
+
+                    let actionHeat = state.heatQ + 0.6 + (state.speedV * 0.25) + virusPenalty;
+                    let actionSpeed = Math.max(1.0, state.speedV * 0.95); 
+
+                    state.heatQ = actionHeat;
+                    state.speedV = actionSpeed;
+                    renderDashboard();
+
+                    const hasMatch = await resolveMatchesAsync(state.board, 1);
+
+                    if (!hasMatch) {
+                        playErrorSound();
+                    }
+
+                    state.isProcessing = false;
+                    checkGameOver();
+                    render();
+                } else {
+                    state.selectedCell = { r, c };
+                    playTone(800, 'sine', 0.05, 0.05);
+                    renderBoard();
+                }
+            }
+        }
+
+        function checkGameOver() {
+            if (state.heatQ >= MAX_HEAT && state.gameState === 'PLAYING') {
+                state.gameState = 'GAMEOVER';
+                playTone(100, 'sawtooth', 2.0, 0.3); 
+                triggerFlash('rgba(255,0,0,0.8)');
+                addLog("CRITICAL: ZERO-LOCK INITIATED. SYSTEM HALTED.", 'error');
+                renderGameOver();
+            }
+        }
+
+        // ==========================================
+        // 5. レンダリング管理
+        // ==========================================
+        function renderLogs() {
+            const container = document.getElementById('log-container');
+            container.innerHTML = '';
+            state.logs.forEach((log, i) => {
+                const div = document.createElement('div');
+                div.textContent = log.msg;
+                if (log.type === 'alert') div.className = 'text-yellow-400 font-bold';
+                else if (log.type === 'error') div.className = 'text-red-500 font-bold animate-pulse';
+                else if (i === 0) div.className = 'text-cyan-300 font-bold';
+                else div.className = 'text-cyan-700';
+                container.appendChild(div);
+            });
+        }
+
+        function renderDashboard() {
+            document.getElementById('ui-speed').textContent = 'x' + state.speedV.toFixed(2);
+            document.getElementById('ui-heat').textContent = Math.floor(state.heatQ) + '%';
+            
+            const heatBar = document.getElementById('heat-bar');
+            heatBar.style.width = `${Math.min(100, state.heatQ)}%`;
+            
+            const heatContainer = document.getElementById('heat-container');
+            const bodyContainer = document.getElementById('body-container');
+            const gameArea = document.getElementById('game-area');
+            
+            if (state.heatQ >= 80) {
+                heatContainer.className = 'bg-gray-900 border-2 p-2 sm:p-3 rounded-lg border-red-500 shadow-[0_0_30px_rgba(239,68,68,0.6)] transition-all animate-pulse';
+                if(!state.isProcessing && state.gameState === 'PLAYING') gameArea.classList.add('shake-intense');
+                bodyContainer.classList.add('bg-red-950/20');
+            } else {
+                heatContainer.className = 'bg-gray-900 border-2 p-2 sm:p-3 rounded-lg border-red-500/30 shadow-[0_0_20px_rgba(239,68,68,0.2)] transition-all';
+                gameArea.classList.remove('shake-intense');
+                bodyContainer.classList.remove('bg-red-950/20');
+            }
+
+            // 注射器UIのレンダリング
+            const slots = document.getElementById('syringe-slots');
+            slots.innerHTML = '';
+            for(let i=0; i<MAX_SYRINGES; i++){
+                const span = document.createElement('span');
+                span.textContent = '💉';
+                if (i < state.syringes) {
+                    span.className = 'text-indigo-400 drop-shadow-[0_0_8px_rgba(99,102,241,0.8)]';
+                } else {
+                    span.className = 'text-gray-700 opacity-40 grayscale';
+                }
+                slots.appendChild(span);
+            }
+
+            const sContainer = document.getElementById('syringe-container');
+            const sHint = document.getElementById('syringe-hint');
+            if (state.syringeMode) {
+                sContainer.className = 'col-span-1 sm:col-span-3 bg-indigo-900 border-2 border-indigo-400 p-2 rounded-lg shadow-[0_0_20px_rgba(99,102,241,0.6)] flex justify-between items-center cursor-pointer animate-pulse';
+                sHint.textContent = '>>> SELECT VIRUS TO PURGE <<<';
+                sHint.className = 'text-white text-[10px] sm:text-xs ml-2 font-black';
+            } else {
+                const canUse = state.syringes > 0 && !state.hasUsedSyringeThisTurn;
+                sContainer.className = `col-span-1 sm:col-span-3 bg-gray-900 border-2 ${canUse ? 'border-indigo-500 hover:brightness-125 hover:shadow-[0_0_15px_rgba(99,102,241,0.4)]' : 'border-indigo-900 opacity-80 cursor-not-allowed'} p-2 rounded-lg flex justify-between items-center cursor-pointer transition-all`;
+                if (state.syringes > 0 && state.hasUsedSyringeThisTurn) {
+                    sHint.textContent = '(USED THIS TURN)';
+                    sHint.className = 'text-[10px] ml-2 text-red-400';
+                } else {
+                    sHint.textContent = state.syringes > 0 ? '(CLICK TO USE)' : '(3 COMBO TO UNLOCK)';
+                    sHint.className = `text-[10px] ml-2 ${state.syringes > 0 ? 'text-indigo-300' : 'text-gray-600'}`;
+                }
+            }
+        }
+
+        function renderBoard() {
+            const grid = document.getElementById('board-grid');
+            const currentUids = new Set();
+
+            for (let r = 0; r < BOARD_SIZE; r++) {
+                for (let c = 0; c < BOARD_SIZE; c++) {
+                    const cell = state.board[r][c];
+                    if (!cell) continue;
+                    
+                    currentUids.add(cell.uid);
+                    let div = domMap.get(cell.uid);
+                    const isSelected = state.selectedCell?.r === r && state.selectedCell?.c === c;
+
+                    if (!div) {
+                        div = document.createElement('div');
+                        div.className = 'cell-wrapper p-0.5 sm:p-1';
+                        
+                        const initialR = r - (cell.spawnOffset || 0);
+                        div.style.transform = `translate(${c * 100}%, ${initialR * 100}%)`;
+                        div.style.opacity = '1'; 
+
+                        const inner = document.createElement('div');
+                        div.dataset.uid = cell.uid;
+                        inner.onclick = function() {
+                            const targetUid = this.parentElement.dataset.uid;
+                            let currentR, currentC;
+                            for(let i=0; i<BOARD_SIZE; i++){
+                                for(let j=0; j<BOARD_SIZE; j++){
+                                    if(state.board[i][j]?.uid === targetUid){
+                                        currentR = i; currentC = j; break;
+                                    }
+                                }
+                            }
+                            if(currentR !== undefined) handleCellClick(currentR, currentC);
+                        };
+
+                        const span = document.createElement('span');
+                        span.className = 'text-2xl sm:text-3xl font-black drop-shadow-lg';
+                        inner.appendChild(span);
+                        
+                        const shine = document.createElement('div');
+                        shine.className = 'absolute inset-0 bg-gradient-to-tr from-transparent via-white/20 to-transparent transform -translate-x-full rotate-45 group-hover:animate-[shine_1s_ease-in-out]';
+                        inner.appendChild(shine);
+
+                        div.appendChild(inner);
+                        grid.appendChild(div);
+                        domMap.set(cell.uid, div);
+                        
+                        void div.offsetWidth;
+                    }
+
+                    div.style.transform = `translate(${c * 100}%, ${r * 100}%)`;
+                    div.style.opacity = '1';
+                    div.style.zIndex = isSelected ? '50' : '10';
+
+                    const inner = div.firstChild;
+                    let stateClasses = isSelected 
+                        ? `scale-90 z-10 brightness-150 ring-4 ring-white ${cell.shadow}` 
+                        : `hover:scale-105 hover:brightness-125 hover:z-20 ${cell.shadow}`;
+                    
+                    let pulseClass = '';
+                    
+                    // 注射器モードの視覚表現
+                    if (state.syringeMode) {
+                        if (cell.type === 'VIRUS') {
+                            pulseClass = 'animate-pulse scale-110 cursor-crosshair ring-4 ring-indigo-500 z-30';
+                        } else {
+                            stateClasses = 'opacity-30 grayscale cursor-not-allowed';
+                        }
+                    } else {
+                        if (cell.type === 'VIRUS') {
+                            pulseClass = 'animate-pulse scale-105';
+                            const age = cell.age || 0;
+                            inner.style.animationDuration = `${Math.max(0.15, 1.0 - (age * 0.15))}s`;
+                            if (age >= 3) stateClasses += ` shadow-[0_0_${15 + age*5}px_rgba(220,38,38,0.9)]`;
+                            if (age >= 5) stateClasses += ' ring-2 ring-red-500 bg-red-900';
+                        } else {
+                            inner.style.animationDuration = ''; 
+                        }
+                    }
+
+                    inner.className = `cell-inner w-full h-full flex items-center justify-center rounded relative overflow-hidden group ${cell.bg} ${cell.border} ${stateClasses} ${pulseClass}`;
+                    inner.firstChild.textContent = cell.icon;
+                    inner.firstChild.className = `text-2xl sm:text-3xl font-black drop-shadow-lg relative z-10 ${cell.text}`;
+                }
+            }
+
+            for (const [uid, div] of domMap.entries()) {
+                if (!currentUids.has(uid)) {
+                    div.style.transform = div.style.transform + ' scale(0)';
+                    div.style.opacity = '0';
+                    div.style.zIndex = '5'; 
+                    setTimeout(() => {
+                        if (div.parentNode) div.parentNode.removeChild(div);
+                        domMap.delete(uid);
+                    }, 300); 
+                }
+            }
+        }
+
+        function renderGameOver() {
+            const overlay = document.getElementById('game-over-overlay');
+            const boardGrid = document.getElementById('board-grid');
+            
+            if (state.gameState === 'GAMEOVER') {
+                overlay.classList.remove('hidden');
+                boardGrid.classList.add('opacity-50', 'blur-sm');
+                document.getElementById('final-output').textContent = state.outputF.toLocaleString();
+            } else {
+                overlay.classList.add('hidden');
+                boardGrid.classList.remove('opacity-50', 'blur-sm');
+            }
+        }
+
+        function render() {
+            renderDashboard();
+            renderBoard();
+        }
+
+        // ==========================================
+        // 6. システム初期化・リセット
+        // ==========================================
+        function initSystem() {
+            document.getElementById('start-overlay').classList.add('hidden');
+            initAudio();
+            handleReboot();
+            requestAnimationFrame(updateScoreAnimation);
+        }
+
+        function handleReboot() {
+            document.getElementById('board-grid').innerHTML = '';
+            domMap.clear();
+
+            state.board = createInitialBoard();
+            state.outputF = 0;
+            state.displayF = 0;
+            state.speedV = BASE_SPEED;
+            state.heatQ = 0;
+            state.syringes = 0;
+            state.syringeMode = false;
+            state.hasUsedSyringeThisTurn = false;
+            state.gameState = 'PLAYING';
+            state.logs = [];
+            state.selectedCell = null;
+            state.isProcessing = false;
+            
+            playTone(400, 'sine', 0.5, 0.1);
+            playTone(800, 'sine', 0.5, 0.1);
+            addLog("SYSTEM ONLINE. OVERDRIVE ENGAGED.", 'alert');
+            
+            setTimeout(() => render(), 50);
+            renderGameOver();
+            renderDashboard();
+        }
+    </script>
+</body>
+</html>
