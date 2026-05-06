@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PitchSense</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* カスタムアニメーション用の追加スタイル */
+        @keyframes zoomIn {
+            from { transform: scale(0.9); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
+        }
+        .animate-zoom-in {
+            animation: zoomIn 0.2s ease-out forwards;
+        }
+        @keyframes popUp {
+            0% { transform: scale(0.5); opacity: 0; }
+            50% { transform: scale(1.2); }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .animate-pop {
+            animation: popUp 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+        /* コントローラーボタンの選択状態 */
+        .btn-selected {
+            background-color: white !important;
+            color: #0f172a !important;
+            transform: scale(0.95);
+            box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.06);
+        }
+        .btn-selected-border {
+            position: absolute;
+            inset: 0;
+            border: 4px solid #10b981;
+            border-radius: 1rem;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen bg-slate-900 font-sans text-slate-100 p-4">
+
+    <!-- Header / Score Board -->
+    <div class="w-full max-w-3xl flex justify-between items-center mb-4 px-6 py-3 bg-slate-800 rounded-xl shadow-lg border border-slate-700">
+        <div class="flex items-center gap-2 sm:gap-3">
+            <!-- Home Button (Title Return) -->
+            <button id="btn-home" class="p-2 hover:bg-slate-700 rounded-lg transition-colors text-slate-400 hover:text-white" title="タイトルへ戻る">
+                <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                    <polyline points="9 22 9 12 15 12 15 22"></polyline>
+                </svg>
+            </button>
+            <svg class="w-8 h-8 text-blue-400 hidden sm:block" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M6 3.5a9 9 0 0 1 0 17" />
+                <path d="M18 3.5a9 9 0 0 0 0 17" />
+                <line x1="8" y1="8" x2="6.5" y2="8.5" />
+                <line x1="8" y1="12" x2="6" y2="12" />
+                <line x1="8" y1="16" x2="6.5" y2="15.5" />
+                <line x1="16" y1="8" x2="17.5" y2="8.5" />
+                <line x1="16" y1="12" x2="18" y2="12" />
+                <line x1="16" y1="16" x2="17.5" y2="15.5" />
+            </svg>
+            <h1 class="text-xl sm:text-2xl font-bold tracking-wider">PitchSense</h1>
+        </div>
+        
+        <div class="flex gap-4 sm:gap-8 text-lg font-semibold items-center">
+            <!-- Speedometer -->
+            <div class="flex flex-col items-center bg-slate-900 px-3 sm:px-4 py-1 rounded-lg border border-slate-700">
+                <span class="text-slate-400 text-[10px] uppercase tracking-wider">Speed</span>
+                <div class="flex items-baseline gap-1">
+                    <span class="text-xl sm:text-2xl text-yellow-400 font-mono w-10 sm:w-12 text-right" id="ui-speed">--</span>
+                    <span class="text-[10px] sm:text-xs text-slate-400">km/h</span>
+                </div>
+            </div>
+
+            <div class="flex flex-col items-center">
+                <span class="text-slate-400 text-xs sm:text-sm">球数</span>
+                <span class="text-lg sm:text-xl"><span id="ui-pitch-count">0</span> <span class="text-xs sm:text-sm text-slate-500">/ 10</span></span>
+            </div>
+            <div class="flex flex-col items-center">
+                <span class="text-slate-400 text-xs sm:text-sm">スコア</span>
+                <span class="text-xl sm:text-2xl text-emerald-400" id="ui-score">0</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Game Screen -->
+    <div class="relative w-full max-w-3xl aspect-[4/3] bg-slate-800 rounded-2xl overflow-hidden shadow-2xl border-4 border-slate-700">
+        
+        <!-- 3D Canvas rendering -->
+        <canvas id="gameCanvas" width="800" height="600" class="w-full h-full object-cover"></canvas>
+
+        <!-- Overlays based on Game State -->
+        
+        <!-- TITLE State -->
+        <div id="overlay-title" class="absolute inset-0 bg-black/60 flex flex-col items-center justify-center backdrop-blur-sm z-10">
+            <svg class="w-24 h-24 text-white mb-6 animate-bounce" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M6 3.5a9 9 0 0 1 0 17" />
+                <path d="M18 3.5a9 9 0 0 0 0 17" />
+                <line x1="8" y1="8" x2="6.5" y2="8.5" />
+                <line x1="8" y1="12" x2="6" y2="12" />
+                <line x1="8" y1="16" x2="6.5" y2="15.5" />
+                <line x1="16" y1="8" x2="17.5" y2="8.5" />
+                <line x1="16" y1="12" x2="18" y2="12" />
+                <line x1="16" y1="16" x2="17.5" y2="15.5" />
+            </svg>
+            <h2 class="text-4xl font-black text-white mb-2 tracking-widest">球種見極めテスト</h2>
+            <p class="text-slate-300 mb-6 max-w-md text-center leading-relaxed text-sm sm:text-base">
+                全9球種！現代野球の変化球と<br>消える魔球・分身魔球を素早く見極めよう！<br>
+                （見極めが早いほど高得点ボーナス！）
+            </p>
+
+            <!-- Difficulty Selector -->
+            <div class="flex gap-3 mb-8">
+                <button onclick="setDifficulty('EASY')" id="btn-diff-easy" class="px-6 py-2 rounded-full border-2 font-bold transition-colors border-slate-500 text-slate-400 hover:bg-slate-700">Easy</button>
+                <button onclick="setDifficulty('NORMAL')" id="btn-diff-normal" class="px-6 py-2 rounded-full border-2 font-bold transition-colors border-blue-500 bg-blue-500/20 text-blue-300">Normal</button>
+                <button onclick="setDifficulty('HARD')" id="btn-diff-hard" class="px-6 py-2 rounded-full border-2 font-bold transition-colors border-slate-500 text-slate-400 hover:bg-slate-700">Hard</button>
+            </div>
+
+            <button id="btn-start" class="px-10 py-4 bg-blue-600 hover:bg-blue-500 text-white text-xl font-bold rounded-full transition-all transform hover:scale-105 shadow-[0_0_20px_rgba(37,99,235,0.5)]">
+                プレイボール！
+            </button>
+        </div>
+
+        <!-- WINDUP / PLAYING Message Overlay -->
+        <div id="overlay-message" class="hidden absolute top-8 left-0 right-0 text-center pointer-events-none z-10">
+            <span id="ui-message-text" class="px-6 py-2 bg-black/50 text-white font-bold text-xl rounded-full backdrop-blur-md border border-white/10 shadow-lg">
+                <!-- Message -->
+            </span>
+        </div>
+
+        <!-- RESULT State -->
+        <div id="overlay-result" class="hidden absolute inset-0 bg-black/40 flex flex-col items-center justify-center backdrop-blur-sm z-20">
+            <div class="bg-slate-800/90 p-8 rounded-2xl border border-slate-600 shadow-2xl text-center transform animate-zoom-in min-w-[300px]">
+                
+                <!-- Check Icon -->
+                <svg id="icon-check" class="hidden w-20 h-20 text-emerald-500 mx-auto mb-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                </svg>
+                
+                <!-- X Icon -->
+                <svg id="icon-x" class="hidden w-20 h-20 text-red-500 mx-auto mb-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+
+                <h3 id="ui-result-message" class="text-2xl font-bold mb-2 text-white"></h3>
+                <p id="ui-result-prediction" class="text-slate-300 mb-2"></p>
+
+                <!-- Reaction Time Box -->
+                <div id="ui-reaction-box" class="mb-6 hidden bg-slate-900/50 rounded-xl py-3 px-4 border border-slate-700">
+                    <p class="text-sm text-slate-400">見極めタイム: <span id="ui-reaction-time" class="font-mono text-white text-lg ml-2"></span></p>
+                    <p id="ui-reaction-eval" class="text-2xl font-black mt-1 animate-pop"></p>
+                </div>
+
+                <button id="btn-next" class="px-8 py-3 bg-white text-slate-900 font-bold rounded-full hover:bg-slate-200 transition-colors w-full shadow-lg hover:scale-105 transform">
+                    次の投球へ
+                </button>
+            </div>
+        </div>
+
+        <!-- FINISH State -->
+        <div id="overlay-finish" class="hidden absolute inset-0 bg-slate-900 flex flex-col items-center justify-center z-30">
+            <h2 class="text-4xl font-black text-white mb-6">ゲーム終了！</h2>
+            <div class="text-center mb-8">
+                <p class="text-slate-400 mb-2">最終スコア <span id="ui-finish-diff" class="ml-2 px-2 py-1 bg-slate-800 rounded text-xs"></span></p>
+                <p class="text-6xl font-black text-emerald-400">
+                    <span id="ui-finish-score">0</span> <span class="text-2xl text-slate-300">/ 30</span>
+                </p>
+            </div>
+            <p id="ui-finish-eval" class="text-xl text-slate-300 mb-10 text-center px-4"></p>
+            <button id="btn-restart" class="px-10 py-4 bg-blue-600 hover:bg-blue-500 text-white text-xl font-bold rounded-full transition-all shadow-[0_0_20px_rgba(37,99,235,0.5)] transform hover:scale-105">
+                もう一度挑戦する
+            </button>
+        </div>
+    </div>
+
+    <!-- Controller (Action Buffer) -->
+    <!-- 9球種に対応するため grid-cols-3 でgapを微調整 -->
+    <div id="controller-container" class="w-full max-w-3xl mt-4 sm:mt-6 grid grid-cols-3 gap-2 transition-opacity duration-300 opacity-50 pointer-events-none">
+        <!-- Buttons injected by JS -->
+    </div>
+
+    <!-- How to play -->
+    <div class="mt-6 text-slate-500 text-sm max-w-2xl text-center px-4">
+        ※ 投球の軌道から球種を予測し、下部のボタンをクリックしてください。（ホームベース通過後も予測できます）
+        <br/>早く正解するほど高得点！ 
+    </div>
+
+    <script>
+        // =====================================================================
+        // Sound System (Web Audio API for lightweight SFX)
+        // =====================================================================
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        let audioCtx;
+
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new AudioContext();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        function playSound(type, pitchId = null) {
+            if (!audioCtx) return;
+            const now = audioCtx.currentTime;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            if (type === 'pitch') {
+                const isIllusion = pitchId === PITCH_TYPES.ILLUSION;
+                const isVanishing = pitchId === PITCH_TYPES.VANISHING;
+                
+                // 魔球の場合は音色や周波数を変える
+                osc.type = isIllusion ? 'sine' : (isVanishing ? 'square' : 'triangle');
+                const startFreq = isIllusion ? 600 : (isVanishing ? 800 : 400);
+                
+                osc.frequency.setValueAtTime(startFreq, now);
+                osc.frequency.exponentialRampToValueAtTime(50, now + (isIllusion ? 0.6 : 0.4));
+                gain.gain.setValueAtTime(isVanishing ? 0.1 : 0.3, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + (isIllusion ? 0.6 : 0.4));
+                
+                // 分身魔球のビブラート効果
+                if (isIllusion) {
+                    const lfo = audioCtx.createOscillator();
+                    lfo.frequency.value = 10;
+                    const lfoGain = audioCtx.createGain();
+                    lfoGain.gain.value = 50;
+                    lfo.connect(lfoGain);
+                    lfoGain.connect(osc.frequency);
+                    lfo.start(now);
+                    lfo.stop(now + 0.6);
+                }
+                
+                osc.start(now);
+                osc.stop(now + (isIllusion ? 0.6 : 0.4));
+                
+            } else if (type === 'correct') {
+                // 正解音 (Ding Ding!)
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(880, now); // A5
+                osc.frequency.setValueAtTime(1108.73, now + 0.1); // C#6
+                gain.gain.setValueAtTime(0.4, now);
+                gain.gain.setTargetAtTime(0, now, 0.1);
+                osc.start(now);
+                osc.stop(now + 0.5);
+            } else if (type === 'wrong') {
+                // 不正解音 (Buzzer)
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(150, now);
+                osc.frequency.setValueAtTime(140, now + 0.2);
+                gain.gain.setValueAtTime(0.2, now);
+                gain.gain.setTargetAtTime(0, now, 0.2);
+                osc.start(now);
+                osc.stop(now + 0.5);
+            } else if (type === 'hit') {
+                 // ボタンクリック音
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(600, now);
+                gain.gain.setValueAtTime(0.1, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+                osc.start(now);
+                osc.stop(now + 0.1);
+            }
+        }
+
+        // =====================================================================
+        // [UCD-F_ABC] Universal Constrained Dynamics Framework - Core Engine
+        // 極端な制約環境下におけるシステム設計思想を基盤とした内部物理シミュレータ
+        // =====================================================================
+
+        // 1. Fixed-Point Arithmetic (完全決定論的演算)
+        const FIXED_SCALE = 65536;
+        const toFixed = (f) => Math.floor(f * FIXED_SCALE);
+        const toFloat = (fx) => fx / FIXED_SCALE;
+
+        // 2. State Bit-packing (魂のビットパッキング)
+        const packState = (vA, vB, vC, dA, dB, dC, state, ruin) => {
+            let p = 0;
+            p |= (vA & 0x3) << 0;     p |= (vB & 0x3) << 2;     p |= (vC & 0x3) << 4;
+            p |= (dA & 0x3F) << 6;    p |= (dB & 0x3F) << 12;   p |= (dC & 0x3F) << 18;
+            p |= (state & 0x7) << 24; p |= (ruin & 0x7) << 27;
+            return p;
+        };
+        const getStateFlag = (packed) => (packed >> 24) & 0x7;
+
+        // 3. VIF/ABC 統合遷移モデルに基づく全球種・魔球パラメータ
+        const PITCH_TYPES = {
+            STRAIGHT: 0,
+            SLIDER: 1,
+            CURVE: 2,
+            FORK: 3,
+            CHANGEUP: 4,
+            SINKER: 5,
+            CUTTER: 6,
+            VANISHING: 7,
+            ILLUSION: 8
+        };
+
+        const PITCH_PARAMS = {
+            [PITCH_TYPES.STRAIGHT]: {
+                id: PITCH_TYPES.STRAIGHT, name: "ストレート", color: "#EF4444",
+                v0: { x: 0.0, y: -0.035, z: -0.50 }, acc: { x: 0.0, y: 0.0005, z: 0.0 }
+            },
+            [PITCH_TYPES.SLIDER]: {
+                id: PITCH_TYPES.SLIDER, name: "スライダー", color: "#F97316",
+                v0: { x: 0.015, y: -0.015, z: -0.46 }, acc: { x: -0.002, y: -0.0005, z: 0.0 }
+            },
+            [PITCH_TYPES.CURVE]: {
+                id: PITCH_TYPES.CURVE, name: "カーブ", color: "#F59E0B",
+                v0: { x: 0.026, y: 0.021, z: -0.35 }, acc: { x: -0.001, y: -0.0015, z: 0.0 }
+            },
+            [PITCH_TYPES.FORK]: {
+                id: PITCH_TYPES.FORK, name: "フォーク", color: "#10B981",
+                v0: { x: 0.0, y: -0.015, z: -0.47 }, acc: { x: 0.0, y: -0.0025, z: 0.0 }
+            },
+            [PITCH_TYPES.CHANGEUP]: {
+                id: PITCH_TYPES.CHANGEUP, name: "チェンジアップ", color: "#3B82F6",
+                v0: { x: 0.0, y: -0.005, z: -0.38 }, acc: { x: 0.0, y: -0.0005, z: 0.0 }
+            },
+            [PITCH_TYPES.SINKER]: {
+                id: PITCH_TYPES.SINKER, name: "シンカー", color: "#8B5CF6",
+                v0: { x: -0.01, y: -0.01, z: -0.43 }, acc: { x: 0.0015, y: -0.0015, z: 0.0 }
+            },
+            [PITCH_TYPES.CUTTER]: {
+                id: PITCH_TYPES.CUTTER, name: "カットボール", color: "#EC4899",
+                v0: { x: 0.005, y: -0.03, z: -0.49 }, acc: { x: -0.001, y: 0.0, z: 0.0 }
+            },
+            [PITCH_TYPES.VANISHING]: {
+                id: PITCH_TYPES.VANISHING, name: "消える魔球", color: "#94A3B8",
+                v0: { x: 0.0, y: -0.035, z: -0.52 }, acc: { x: 0.0, y: 0.0005, z: 0.0 },
+                isVanishing: true
+            },
+            [PITCH_TYPES.ILLUSION]: {
+                id: PITCH_TYPES.ILLUSION, name: "分身魔球", color: "#D946EF",
+                v0: { x: 0.0, y: -0.01, z: -0.40 }, acc: { x: 0.0, y: -0.0005, z: 0.0 },
+                isIllusion: true
+            }
+        };
+
+        const DIFFICULTY_MULTIPLIER = {
+            'EASY': 0.75,
+            'NORMAL': 1.0,
+            'HARD': 1.25
+        };
+
+        // 4. Memory Layout: Bit-packed SoA
+        class UCDF_Core {
+            constructor() {
+                this.MAX_ENTITIES = 64; 
+                this.posX = new Int32Array(this.MAX_ENTITIES);
+                this.posY = new Int32Array(this.MAX_ENTITIES);
+                this.posZ = new Int32Array(this.MAX_ENTITIES);
+                this.velX = new Int32Array(this.MAX_ENTITIES);
+                this.velY = new Int32Array(this.MAX_ENTITIES);
+                this.velZ = new Int32Array(this.MAX_ENTITIES);
+                this.accX = new Int32Array(this.MAX_ENTITIES);
+                this.accY = new Int32Array(this.MAX_ENTITIES);
+                this.accZ = new Int32Array(this.MAX_ENTITIES);
+                this.state = new Uint32Array(this.MAX_ENTITIES);
+                
+                this.head = 0;
+                this.activeCount = 0;
+                this.currentPitchType = 0;
+            }
+
+            materialize(pitchTypeId, baseMultiplier = 1.0) {
+                this.currentPitchType = pitchTypeId;
+                this.head = 0;
+                this.activeCount = 1;
+                
+                const p = PITCH_PARAMS[pitchTypeId];
+                
+                this.posX[0] = toFixed(0);
+                this.posY[0] = toFixed(1.8);
+                this.posZ[0] = toFixed(18.44);
+                
+                const speedVariance = 0.95 + (Math.random() * 0.1); 
+                const finalMultiplier = baseMultiplier * speedVariance;
+
+                const controlVarianceX = (Math.random() - 0.5) * 0.008;
+                const controlVarianceY = (Math.random() - 0.5) * 0.008;
+                
+                this.velX[0] = toFixed((p.v0.x + controlVarianceX) * finalMultiplier);
+                this.velY[0] = toFixed((p.v0.y + controlVarianceY) * finalMultiplier);
+                this.velZ[0] = toFixed(p.v0.z * finalMultiplier);
+                
+                this.accX[0] = toFixed(p.acc.x * finalMultiplier);
+                this.accY[0] = toFixed(p.acc.y * finalMultiplier);
+                this.accZ[0] = toFixed(p.acc.z * finalMultiplier);
+                
+                this.state[0] = packState(1,0,0, 0,0,0, 1, 0); 
+            }
+
+            tick() {
+                const prev = this.head;
+                const next = (this.head + 1) % this.MAX_ENTITIES;
+                
+                this.velX[next] = this.velX[prev] + this.accX[prev];
+                this.velY[next] = this.velY[prev] + this.accY[prev];
+                this.velZ[next] = this.velZ[prev] + this.accZ[prev];
+                
+                this.posX[next] = this.posX[prev] + this.velX[next];
+                this.posY[next] = this.posY[prev] + this.velY[next];
+                this.posZ[next] = this.posZ[prev] + this.velZ[next];
+                
+                this.accX[next] = this.accX[prev];
+                this.accY[next] = this.accY[prev];
+                this.accZ[next] = this.accZ[prev];
+                
+                this.state[next] = packState(1,0,0, 0,0,0, 1, 0); 
+                this.state[prev] = packState(0,0,0, 0,0,0, 0, 0); 
+                
+                this.head = next;
+                if (this.activeCount < this.MAX_ENTITIES) this.activeCount++;
+            }
+
+            getCurrentZ() { return toFloat(this.posZ[this.head]); }
+            
+            getSpeedKmh() {
+                if (this.activeCount === 0) return 0;
+                const vx = toFloat(this.velX[this.head]);
+                const vy = toFloat(this.velY[this.head]);
+                const vz = toFloat(this.velZ[this.head]);
+                const speedScale = Math.sqrt(vx*vx + vy*vy + vz*vz);
+                return Math.round(speedScale * 300);
+            }
+        }
+
+        // =====================================================================
+        // Game State & Logic
+        // =====================================================================
+        let core = new UCDF_Core();
+        const MAX_PITCHES = 10;
+        
+        let state = {
+            gameState: 'TITLE',
+            score: 0,
+            pitchCount: 0,
+            predictedType: null,
+            actualType: null,
+            message: "",
+            difficulty: 'NORMAL',
+            pitchStartTime: 0,
+            reactionTime: null,
+            reactionEval: "",
+            earnedScore: 0
+        };
+
+        // DOM Elements
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const uiScore = document.getElementById('ui-score');
+        const uiPitchCount = document.getElementById('ui-pitch-count');
+        const uiSpeed = document.getElementById('ui-speed');
+        
+        const overlayTitle = document.getElementById('overlay-title');
+        const overlayMessage = document.getElementById('overlay-message');
+        const uiMessageText = document.getElementById('ui-message-text');
+        
+        const overlayResult = document.getElementById('overlay-result');
+        const iconCheck = document.getElementById('icon-check');
+        const iconX = document.getElementById('icon-x');
+        const uiResultMessage = document.getElementById('ui-result-message');
+        const uiResultPrediction = document.getElementById('ui-result-prediction');
+        const uiReactionBox = document.getElementById('ui-reaction-box');
+        const uiReactionTime = document.getElementById('ui-reaction-time');
+        const uiReactionEval = document.getElementById('ui-reaction-eval');
+        const btnNext = document.getElementById('btn-next');
+        
+        const overlayFinish = document.getElementById('overlay-finish');
+        const uiFinishScore = document.getElementById('ui-finish-score');
+        const uiFinishEval = document.getElementById('ui-finish-eval');
+        const uiFinishDiff = document.getElementById('ui-finish-diff');
+        
+        const controllerContainer = document.getElementById('controller-container');
+
+        // Difficulty Selection
+        window.setDifficulty = function(level) {
+            initAudio();
+            playSound('hit');
+            state.difficulty = level;
+            const btns = {
+                'EASY': document.getElementById('btn-diff-easy'),
+                'NORMAL': document.getElementById('btn-diff-normal'),
+                'HARD': document.getElementById('btn-diff-hard')
+            };
+            
+            Object.values(btns).forEach(b => {
+                b.className = "px-6 py-2 rounded-full border-2 font-bold transition-colors border-slate-500 text-slate-400 hover:bg-slate-700";
+            });
+            
+            btns[level].className = "px-6 py-2 rounded-full border-2 font-bold transition-colors border-blue-500 bg-blue-500/20 text-blue-300";
+        };
+
+        // Initialize Controller Buttons
+        function initController() {
+            controllerContainer.innerHTML = '';
+            Object.values(PITCH_PARAMS).forEach(pitch => {
+                const btn = document.createElement('button');
+                btn.id = `btn-pitch-${pitch.id}`;
+                btn.className = "relative overflow-hidden py-3 sm:py-4 rounded-xl font-bold text-base sm:text-xl transition-all duration-200 bg-slate-800 text-white shadow-lg border border-slate-600 hover:bg-slate-700 hover:-translate-y-1";
+                
+                btn.innerHTML = `
+                    <div class="relative z-10 flex flex-col items-center gap-1">
+                        <span class="w-3 h-3 sm:w-4 sm:h-4 rounded-full" style="background-color: ${pitch.color}"></span>
+                        <span class="whitespace-nowrap text-[11px] sm:text-sm tracking-tight">${pitch.name}</span>
+                    </div>
+                `;
+                
+                btn.onclick = () => handlePredict(pitch.id);
+                controllerContainer.appendChild(btn);
+            });
+        }
+
+        // UI Update Logic
+        function updateUI() {
+            uiScore.textContent = state.score;
+            uiPitchCount.textContent = state.pitchCount;
+
+            overlayTitle.classList.add('hidden');
+            overlayMessage.classList.add('hidden');
+            overlayResult.classList.add('hidden');
+            overlayFinish.classList.add('hidden');
+
+            if (state.gameState === 'TITLE') {
+                overlayTitle.classList.remove('hidden');
+                uiSpeed.textContent = "--";
+            } else if (state.gameState === 'WINDUP' || state.gameState === 'PLAYING') {
+                overlayMessage.classList.remove('hidden');
+                uiMessageText.textContent = state.message;
+            } else if (state.gameState === 'RESULT') {
+                overlayResult.classList.remove('hidden');
+                uiResultMessage.textContent = state.message;
+                
+                if (state.predictedType !== null) {
+                    uiResultPrediction.textContent = `あなたの予測: ${PITCH_PARAMS[state.predictedType].name}`;
+                }
+                
+                if (state.predictedType === state.actualType && state.predictedType !== null) {
+                    iconCheck.classList.remove('hidden');
+                    iconX.classList.add('hidden');
+                    uiReactionBox.classList.remove('hidden');
+                    
+                    // アニメーションのリセット用
+                    uiReactionEval.classList.remove('animate-pop');
+                    void uiReactionEval.offsetWidth; // trigger reflow
+                    uiReactionEval.classList.add('animate-pop');
+
+                    if (state.reactionTime !== null) {
+                        uiReactionTime.textContent = (state.reactionTime / 1000).toFixed(2) + "s";
+                    } else {
+                        uiReactionTime.textContent = "通過後";
+                    }
+                    
+                    uiReactionEval.textContent = state.reactionEval + ` (+${state.earnedScore})`;
+                    
+                    // 評価に応じた色
+                    if (state.earnedScore === 3) uiReactionEval.className = "text-2xl font-black mt-1 animate-pop text-yellow-400";
+                    else if (state.earnedScore === 2) uiReactionEval.className = "text-2xl font-black mt-1 animate-pop text-blue-400";
+                    else uiReactionEval.className = "text-2xl font-black mt-1 animate-pop text-emerald-400";
+                    
+                } else {
+                    iconCheck.classList.add('hidden');
+                    iconX.classList.remove('hidden');
+                    uiReactionBox.classList.add('hidden');
+                }
+                
+                btnNext.textContent = state.pitchCount >= MAX_PITCHES ? "結果を見る" : "次の投球へ";
+            } else if (state.gameState === 'FINISH') {
+                overlayFinish.classList.remove('hidden');
+                uiFinishScore.textContent = state.score;
+                uiFinishDiff.textContent = `(${state.difficulty})`;
+                
+                let evalText = "ピッチャーに完全に手玉に取られているぞ！";
+                if (state.score === MAX_PITCHES * 3) evalText = "パーフェクト！神の選球眼！プロレベルだ！";
+                else if (state.score >= 20) evalText = "素晴らしい！優秀なバッターだ！";
+                else if (state.score >= 10) evalText = "まずまず。さらなる訓練が必要だ。";
+                
+                if (state.difficulty === 'HARD' && state.score >= 20) {
+                    evalText = "豪速球を見極めるとは…！バッティングの天才だ！";
+                }
+
+                uiFinishEval.textContent = evalText;
+            }
+
+            if (state.gameState === 'PLAYING') {
+                controllerContainer.classList.remove('opacity-50', 'pointer-events-none');
+                controllerContainer.classList.add('opacity-100');
+            } else {
+                controllerContainer.classList.add('opacity-50', 'pointer-events-none');
+                controllerContainer.classList.remove('opacity-100');
+            }
+
+            Object.values(PITCH_PARAMS).forEach(pitch => {
+                const btn = document.getElementById(`btn-pitch-${pitch.id}`);
+                if (!btn) return;
+                
+                btn.className = "relative overflow-hidden py-3 sm:py-4 rounded-xl font-bold text-base sm:text-xl transition-all duration-200 bg-slate-800 text-white shadow-lg border border-slate-600 hover:bg-slate-700 hover:-translate-y-1";
+                const borderDiv = btn.querySelector('.btn-selected-border');
+                if (borderDiv) borderDiv.remove();
+
+                const isSelected = state.predictedType === pitch.id;
+                const isDisabled = state.gameState !== 'PLAYING' || state.predictedType !== null;
+
+                if (isSelected) {
+                    btn.classList.add('btn-selected');
+                    const selBorder = document.createElement('div');
+                    selBorder.className = 'btn-selected-border';
+                    btn.appendChild(selBorder);
+                }
+                
+                btn.disabled = isDisabled;
+            });
+        }
+
+        // Actions
+        function startGame() {
+            initAudio();
+            playSound('hit');
+            state.score = 0;
+            state.pitchCount = 0;
+            startNextPitch(1);
+        }
+
+        function resetToTitle() {
+            state.gameState = 'TITLE';
+            state.score = 0;
+            state.pitchCount = 0;
+            core.activeCount = 0;
+            updateUI();
+        }
+
+        function startNextPitch(nextCount) {
+            state.gameState = 'WINDUP';
+            state.predictedType = null;
+            state.actualType = null;
+            state.reactionTime = null;
+            state.reactionEval = "";
+            state.earnedScore = 0;
+            state.message = "ピッチャー、振りかぶって...";
+            uiSpeed.textContent = "--";
+            updateUI();
+            
+            setTimeout(() => {
+                const numPitches = Object.keys(PITCH_TYPES).length;
+                const nextPitchId = Math.floor(Math.random() * numPitches);
+                const mult = DIFFICULTY_MULTIPLIER[state.difficulty];
+                
+                core.materialize(nextPitchId, mult);
+                playSound('pitch', nextPitchId); // 魔球なら音が変わる
+                
+                state.actualType = nextPitchId;
+                state.pitchCount = nextCount;
+                state.gameState = 'PLAYING';
+                state.message = "投げた！球種を予測しろ！";
+                state.pitchStartTime = performance.now(); // 反応時間の計測開始
+                updateUI();
+            }, 1000);
+        }
+
+        function handlePredict(typeId) {
+            initAudio();
+            playSound('hit');
+            if (state.gameState !== 'PLAYING' || state.predictedType !== null) return;
+            
+            state.predictedType = typeId;
+            
+            // プレイ中の反応時間を記録（通過後はnullのまま）
+            if (core.getCurrentZ() > 0) {
+                state.reactionTime = performance.now() - state.pitchStartTime;
+            }
+            
+            if (core.getCurrentZ() <= 0) {
+                handlePitchEnd();
+            } else {
+                updateUI();
+            }
+        }
+
+        function handlePitchEnd() {
+            state.gameState = 'RESULT';
+            const isCorrect = state.predictedType === core.currentPitchType;
+            const pitchName = PITCH_PARAMS[core.currentPitchType].name;
+
+            if (isCorrect) {
+                let pts = 1;
+                state.reactionEval = "";
+                const rt = state.reactionTime;
+                
+                if (rt !== null) {
+                    if (rt < 400) { state.reactionEval = "EXCELLENT!!"; pts = 3; }
+                    else if (rt < 700) { state.reactionEval = "GREAT!"; pts = 2; }
+                    else { state.reactionEval = "GOOD"; pts = 1; }
+                } else {
+                    state.reactionEval = "SLOW..."; pts = 1;
+                }
+                
+                state.earnedScore = pts;
+                state.score += pts;
+                state.message = `見極め成功！「${pitchName}」だ！`;
+                playSound('correct');
+            } else {
+                state.reactionEval = "MISS";
+                state.earnedScore = 0;
+                state.message = `ハズレ...正解は「${pitchName}」でした。`;
+                playSound('wrong');
+            }
+            updateUI();
+        }
+
+        function handleNext() {
+            initAudio();
+            playSound('hit');
+            if (state.pitchCount >= MAX_PITCHES) {
+                state.gameState = 'FINISH';
+                updateUI();
+            } else {
+                startNextPitch(state.pitchCount + 1);
+            }
+        }
+
+        // Event Listeners
+        document.getElementById('btn-start').addEventListener('click', startGame);
+        document.getElementById('btn-next').addEventListener('click', handleNext);
+        document.getElementById('btn-restart').addEventListener('click', startGame);
+        document.getElementById('btn-home').addEventListener('click', () => {
+            initAudio();
+            playSound('hit');
+            if (state.gameState !== 'TITLE') {
+                if (confirm("タイトル画面に戻りますか？現在の進行状況はリセットされます。")) {
+                    resetToTitle();
+                }
+            }
+        });
+
+        // =====================================================================
+        // Drawing System (Zソート描画)
+        // =====================================================================
+        function draw() {
+            const width = canvas.width;
+            const height = canvas.height;
+
+            ctx.fillStyle = '#14532d';
+            ctx.fillRect(0, 0, width, height);
+
+            const focalLength = 4.0;
+            const cameraZ = -2.0;
+            const cameraY = 1.0;
+            const pixelsPerMeter = 250;
+
+            const project = (x, y, z) => {
+                if (z < cameraZ) return null;
+                const scale = focalLength / (focalLength + z - cameraZ);
+                return {
+                    x: width / 2 + x * scale * pixelsPerMeter,
+                    y: height / 2 - (y - cameraY) * scale * pixelsPerMeter,
+                    scale: scale
+                };
+            };
+
+            const drawEnv = () => {
+                const mound = project(0, 0, 18.44);
+                if (mound) {
+                    ctx.fillStyle = '#78350f';
+                    ctx.beginPath();
+                    ctx.ellipse(mound.x, mound.y + 20, 80 * mound.scale, 20 * mound.scale, 0, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    const s = mound.scale * pixelsPerMeter;
+                    const px = mound.x;
+                    const py = mound.y + 20; 
+
+                    const renderPose = (isOutline) => {
+                        ctx.strokeStyle = isOutline ? '#0f172a' : '#cbd5e1'; 
+                        ctx.lineWidth = isOutline ? 0.45 * s : 0.25 * s;
+                        ctx.lineCap = 'round';
+                        ctx.lineJoin = 'round';
+                        
+                        const headRadius = isOutline ? 0.20 * s : 0.15 * s;
+                        ctx.fillStyle = isOutline ? '#0f172a' : '#cbd5e1';
+
+                        if (state.gameState === 'WINDUP') {
+                            ctx.beginPath(); ctx.arc(px, py - 1.7 * s, headRadius, 0, Math.PI * 2); ctx.fill();
+                            ctx.beginPath(); ctx.moveTo(px, py - 1.5 * s); ctx.lineTo(px, py - 0.9 * s); ctx.stroke();
+                            ctx.beginPath(); ctx.moveTo(px, py - 0.9 * s); ctx.lineTo(px - 0.1 * s, py); ctx.stroke();
+                            ctx.beginPath(); ctx.moveTo(px, py - 0.9 * s); ctx.lineTo(px + 0.3 * s, py - 0.9 * s); ctx.lineTo(px + 0.3 * s, py - 1.4 * s); ctx.stroke();
+                            ctx.beginPath(); ctx.moveTo(px - 0.1 * s, py - 1.4 * s); ctx.lineTo(px - 0.3 * s, py - 1.8 * s); ctx.lineTo(px, py - 1.9 * s); ctx.stroke();
+                            ctx.beginPath(); ctx.moveTo(px + 0.1 * s, py - 1.4 * s); ctx.lineTo(px + 0.3 * s, py - 1.8 * s); ctx.lineTo(px, py - 1.9 * s); ctx.stroke();
+                        } else if (state.gameState === 'PLAYING') {
+                            ctx.beginPath(); ctx.arc(px - 0.4 * s, py - 1.2 * s, headRadius, 0, Math.PI * 2); ctx.fill();
+                            ctx.beginPath(); ctx.moveTo(px - 0.3 * s, py - 1.1 * s); ctx.lineTo(px + 0.2 * s, py - 0.8 * s); ctx.stroke();
+                            ctx.beginPath(); ctx.moveTo(px + 0.2 * s, py - 0.8 * s); ctx.lineTo(px - 0.6 * s, py - 0.2 * s); ctx.lineTo(px - 0.8 * s, py); ctx.stroke();
+                            ctx.beginPath(); ctx.moveTo(px + 0.2 * s, py - 0.8 * s); ctx.lineTo(px + 0.6 * s, py - 1.2 * s); ctx.stroke();
+                            ctx.beginPath(); ctx.moveTo(px - 0.2 * s, py - 1.0 * s); ctx.lineTo(px - 0.7 * s, py - 0.5 * s); ctx.stroke();
+                            ctx.beginPath(); ctx.moveTo(px - 0.3 * s, py - 1.0 * s); ctx.lineTo(px + 0.2 * s, py - 0.5 * s); ctx.stroke();
+                        } else {
+                            ctx.beginPath(); ctx.arc(px, py - 1.7 * s, headRadius, 0, Math.PI * 2); ctx.fill();
+                            ctx.beginPath(); ctx.moveTo(px, py - 1.5 * s); ctx.lineTo(px, py - 0.9 * s); ctx.stroke();
+                            ctx.beginPath(); ctx.moveTo(px, py - 0.9 * s); ctx.lineTo(px - 0.2 * s, py); ctx.stroke();
+                            ctx.beginPath(); ctx.moveTo(px, py - 0.9 * s); ctx.lineTo(px + 0.2 * s, py); ctx.stroke();
+                            ctx.beginPath(); ctx.moveTo(px - 0.1 * s, py - 1.4 * s); ctx.lineTo(px - 0.3 * s, py - 1.2 * s); ctx.lineTo(px, py - 1.1 * s); ctx.stroke();
+                            ctx.beginPath(); ctx.moveTo(px + 0.1 * s, py - 1.4 * s); ctx.lineTo(px + 0.3 * s, py - 1.2 * s); ctx.lineTo(px, py - 1.1 * s); ctx.stroke();
+                        }
+                    };
+
+                    renderPose(true);
+                    renderPose(false);
+                }
+
+                const home = project(0, 0, 0);
+                if (home) {
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath();
+                    ctx.moveTo(home.x, home.y);
+                    ctx.lineTo(home.x - 20 * home.scale, home.y - 10 * home.scale);
+                    ctx.lineTo(home.x - 20 * home.scale, home.y - 30 * home.scale);
+                    ctx.lineTo(home.x + 20 * home.scale, home.y - 30 * home.scale);
+                    ctx.lineTo(home.x + 20 * home.scale, home.y - 10 * home.scale);
+                    ctx.closePath();
+                    ctx.fill();
+
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+                    ctx.lineWidth = 2;
+                    const szBottom = project(-0.25, 0.5, 0);
+                    const szTop = project(0.25, 1.1, 0);
+                    if (szBottom && szTop) {
+                        const w = szTop.x - szBottom.x;
+                        const h = szBottom.y - szTop.y;
+                        ctx.strokeRect(szBottom.x, szTop.y, w, h);
+                    }
+                }
+            };
+
+            drawEnv();
+
+            if (core.activeCount === 0 || state.gameState === 'TITLE' || state.gameState === 'WINDUP') return;
+
+            const p = PITCH_PARAMS[core.currentPitchType];
+
+            for (let i = core.activeCount - 1; i >= 0; i--) {
+                let idx = core.head - i;
+                if (idx < 0) idx += core.MAX_ENTITIES;
+
+                const x = toFloat(core.posX[idx]);
+                const y = toFloat(core.posY[idx]);
+                const z = toFloat(core.posZ[idx]);
+
+                // 消える魔球のアルファ計算
+                let alphaMult = 1.0;
+                if (p.isVanishing) {
+                    if (z < 12.0 && z > 3.0) {
+                        alphaMult = 0.0;
+                    } else if (z <= 3.0 && z > 0.0) {
+                        alphaMult = (3.0 - z) / 3.0; // 3mから徐々に現れる
+                    } else if (z >= 12.0 && z < 15.0) {
+                        alphaMult = (z - 12.0) / 3.0; // 15mから徐々に消える
+                    }
+                }
+
+                if (alphaMult <= 0.01) continue;
+
+                const proj = project(x, y, z);
+                if (!proj) continue;
+
+                const isActive = (i === 0);
+                const ageRatio = 1.0 - (i / core.MAX_ENTITIES);
+                
+                // --- ボール描画関数 ---
+                const drawBall = (projX, projY, scale, alpha, isFake = false) => {
+                    ctx.beginPath();
+                    const baseRadius = 0.036;
+                    const radius = Math.max(1, baseRadius * scale * pixelsPerMeter);
+                    ctx.arc(projX, projY, radius, 0, Math.PI * 2);
+                    
+                    if (isActive) {
+                        ctx.fillStyle = isFake ? `rgba(255,255,255,${0.6 * alpha})` : `rgba(255,255,255,${alpha})`;
+                        
+                        if (!isFake) {
+                            ctx.shadowColor = `rgba(0,0,0,${0.5 * alpha})`;
+                            ctx.shadowBlur = 10;
+                        }
+                        
+                        ctx.fill();
+                        ctx.shadowBlur = 0;
+                        
+                        ctx.strokeStyle = `rgba(239,68,68,${isFake ? 0.6 * alpha : alpha})`;
+                        ctx.lineWidth = Math.max(1, 1 * scale);
+                        ctx.beginPath();
+                        ctx.arc(projX - radius*0.5, projY, radius*0.7, -Math.PI/3, Math.PI/3);
+                        ctx.stroke();
+                        ctx.beginPath();
+                        ctx.arc(projX + radius*0.5, projY, radius*0.7, Math.PI - Math.PI/3, Math.PI + Math.PI/3);
+                        ctx.stroke();
+                    } else {
+                        // 軌跡の描画 (Hardモード以外、またはフェイクボールの軌跡)
+                        if (state.difficulty !== 'HARD' || isFake) {
+                            ctx.fillStyle = '#ffffff';
+                            ctx.globalAlpha = (isFake ? ageRatio * 0.2 : ageRatio * 0.4) * alpha;
+                            ctx.fill();
+                            ctx.globalAlpha = 1.0;
+                        }
+                    }
+                };
+
+                // メインボールを描画
+                drawBall(proj.x, proj.y, proj.scale, alphaMult);
+
+                // 分身魔球の描画
+                if (p.isIllusion) {
+                    // Z=18mから手前にかけて広がる螺旋軌道
+                    const spread = Math.max(0, (18 - z) * 0.04); 
+                    const angle = z * 2; // 回転速度
+                    
+                    const offsets = [
+                        { x: Math.cos(angle) * spread, y: Math.sin(angle) * spread },
+                        { x: Math.cos(angle + 2.094) * spread, y: Math.sin(angle + 2.094) * spread }, // 120度
+                        { x: Math.cos(angle + 4.188) * spread, y: Math.sin(angle + 4.188) * spread }  // 240度
+                    ];
+                    
+                    offsets.forEach(off => {
+                        const fakeProj = project(x + off.x, y + off.y, z);
+                        if (fakeProj) {
+                            drawBall(fakeProj.x, fakeProj.y, fakeProj.scale, alphaMult, true);
+                        }
+                    });
+                }
+            }
+        }
+
+        // =====================================================================
+        // Main Loop
+        // =====================================================================
+        let lastZ = 18.44;
+
+        function loop() {
+            if (state.gameState === 'PLAYING') {
+                const currentZ = core.getCurrentZ();
+                
+                if (currentZ > -5.0) {
+                    core.tick();
+                    
+                    if (currentZ > 2.0 && currentZ < 17.0) {
+                        uiSpeed.textContent = core.getSpeedKmh();
+                    }
+                }
+                
+                if (currentZ <= 0 && state.predictedType !== null) {
+                    handlePitchEnd();
+                }
+                
+                lastZ = currentZ;
+            }
+            draw();
+            requestAnimationFrame(loop);
+        }
+
+        // Boot
+        window.onload = () => {
+            initController();
+            updateUI();
+            requestAnimationFrame(loop);
+        };
+
+    </script>
+</body>
+</html>
