@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GRAVITY ZERO — テストスイート</title>
+    <link rel="stylesheet" href="../www/css/style.css">
+    <style>
+        /* テスト結果表示は最前面に置き、ゲーム画面を覆う */
+        #test-report {
+            position: fixed;
+            inset: 0;
+            z-index: 5000;
+            background: #0a0e18;
+            color: #cde;
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 13px;
+            overflow-y: auto;
+            padding: 20px 24px;
+            box-sizing: border-box;
+        }
+        #test-report h1 { font-size: 20px; color: #7fd0ff; margin: 0 0 4px; }
+        #test-summary { font-size: 15px; margin: 8px 0 16px; padding: 10px 14px; border-radius: 6px; }
+        #test-summary.pass { background: rgba(60, 200, 120, 0.15); border: 1px solid #3c8; color: #7fffb0; }
+        #test-summary.fail { background: rgba(220, 70, 90, 0.15); border: 1px solid #d46; color: #ff8095; }
+        .test-group { margin: 14px 0 6px; color: #ffcf70; font-size: 14px; border-bottom: 1px solid #263; padding-bottom: 3px; }
+        .test-case { padding: 2px 0 2px 18px; }
+        .test-case.ok { color: #8fe6b0; }
+        .test-case.ng { color: #ff8095; font-weight: bold; }
+        .test-case .detail { color: #889; font-weight: normal; }
+        .test-case.ng .detail { color: #fbb; }
+    </style>
+</head>
+<body>
+
+<!-- ===== ゲームが参照するDOM(index.html と同じ構造の最小フィクスチャ) ===== -->
+<canvas id="game-canvas"></canvas>
+<canvas id="overlay-canvas"></canvas>
+
+<div id="start-overlay">
+    <div class="game-title">GRAVITY ZERO</div>
+    <div class="game-subtitle">3D FLIGHT SHOOTER</div>
+    <div class="quick-hints">
+        <div><b>WASD</b> 移動 ・ <b>SPACE</b> ショット</div>
+    </div>
+    <div class="start-btn">TAP TO START</div>
+    <div class="start-btn start-btn-sub" id="challenge-btn">CHALLENGE MODE<small>2 MIN / INVINCIBLE / SCORE ATTACK</small></div>
+    <div class="start-btn start-btn-sub" id="free-btn">FREE FLIGHT<small>NO ENEMIES / PRACTICE</small></div>
+    <div class="level-select" id="level-select">START LEVEL <b id="start-level-val">1</b> ▸</div>
+    <div class="best-line">BEST SCORE <span id="start-best">0</span></div>
+</div>
+
+<div id="help-overlay" style="display: none;">
+    <div class="guide-card">
+        <h2 class="guide-heading">遊び方</h2>
+        <p class="guide-lead">テスト用フィクスチャ。</p>
+        <h3 class="guide-sub">操作</h3>
+        <div class="guide-grid"><div class="guide-ctrl"><b>移動</b><span>WASD</span></div></div>
+    </div>
+    <div class="guide-card">
+        <h2 class="guide-heading">キー設定(PC)</h2>
+        <div id="keyconfig-rows"></div>
+        <div class="keyconfig-actions">
+            <button id="keyconfig-reset" class="key-btn">初期設定に戻す</button>
+        </div>
+    </div>
+    <div class="start-btn" id="help-resume">ゲームに戻る</div>
+    <div class="start-btn start-btn-sub" id="help-to-title">タイトルへ戻る</div>
+</div>
+
+<div id="gameover-overlay" style="display: none;">
+    <div class="game-title" id="gameover-title">GAME OVER</div>
+    <div class="game-subtitle">SCORE <span id="final-score">0</span> ・ KILLS <span id="final-kills">0</span></div>
+    <div class="game-subtitle">BEST <span id="best-score">0</span></div>
+    <div class="game-subtitle" id="run-stats">MAX COMBO ×0 ・ GRAZE 0</div>
+    <div id="new-record" style="display: none;">NEW RECORD!</div>
+    <div id="ranking-box" style="display: none;">
+        <div class="rank-title">RANKING — TOP 5</div>
+        <ol id="ranking-list"></ol>
+    </div>
+    <div class="start-btn">RESTART</div>
+    <div class="start-btn start-btn-sub" id="to-title">TITLE</div>
+</div>
+
+<div id="boss-bar-wrap" style="display: none;">
+    <div id="boss-label">⚠ WARNING · BOSS</div>
+    <div id="boss-bar"><div id="boss-fill"></div></div>
+</div>
+
+<div id="challenge-time" style="display: none;">2:00</div>
+
+<div id="free-exit" style="display: none;">EXIT</div>
+
+<div id="help-btn">？</div>
+
+<div id="ui-layer">
+    <div class="panel">
+        <div class="score-row">SCORE <span id="score-display">0</span>
+            <span class="level-chip">LV <span id="level-display">1</span></span></div>
+        <div id="hp-bar"><div id="hp-fill"></div></div>
+        <div class="mode-row">
+            <span id="mode-display" class="mode-name-sm">STANDARD</span>
+            <span class="trait-row-inline">
+                <span class="trait">DEF <span id="trait-def" class="trait-val trait-mid">MID</span></span>
+                <span class="trait">ROF <span id="trait-fire" class="trait-val trait-mid">MID</span></span>
+                <span class="trait">PWR <span id="trait-pow" class="trait-val trait-mid">MID</span></span>
+            </span>
+        </div>
+        <div class="sub-row">GUN: <span id="gun-level">SINGLE</span></div>
+        <div class="sub-row">WISP: <span id="wisp-count">NONE</span></div>
+        <div class="sub-row">SUB: <span id="sub-name">NONE</span></div>
+        <div id="subcd-bar"><div id="subcd-fill"></div></div>
+    </div>
+</div>
+
+<div id="cooldown-bar"><div id="cooldown-fill"></div></div>
+
+<div id="mobile-controls">
+    <div id="virtual-stick"><div id="stick-knob"></div></div>
+    <div class="btn-grid">
+        <div class="btn-row">
+            <div class="m-btn" id="btn-sub">SUB</div>
+            <div class="m-btn" id="btn-blink">ZERO SHIFT</div>
+            <div class="m-btn" id="btn-boost">BOOST</div>
+        </div>
+        <div class="btn-row">
+            <div class="m-btn" id="btn-mode">MODE</div>
+            <div class="m-btn" id="btn-lock">LOCK</div>
+            <div class="m-btn" id="btn-fire">FIRE</div>
+        </div>
+    </div>
+</div>
+
+<!-- ===== テスト結果表示 ===== -->
+<div id="test-report"><h1>GRAVITY ZERO — テストスイート実行中…</h1></div>
+
+<!-- ゲーム本体を読み込む(window.game / window.ZMF を生成) -->
+<script type="module" src="../www/js/main.js"></script>
+<!-- テストを実行 -->
+<script type="module" src="tests.js"></script>
+</body>
+</html>
