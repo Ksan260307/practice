@@ -1,0 +1,483 @@
+# **ABCモデル：観測層仕様（v1.0.0）**
+
+**対応 Core バージョン**：v3.2.2
+**ステータス**：Draft
+**規範キーワード**：本書の **MUST／MUST NOT／SHOULD／MAY** は RFC 2119 に準じて解釈する。
+
+***
+
+## 0. スコープと位置づけ
+
+本仕様は、生の入力（発話テキスト・センサ値・イベントログ等）を **Core v3.2.2 が受理できる正規形
+`Observation`** に変換する層の**契約**を定義する。
+
+*   Core は状態を所有し、観測は融合される（Core §2.8）。**観測層はステートレスな変換器として
+    実装できる**（自前の履歴窓を持ってよいが、Core の carry 状態には触れない）。
+*   本仕様が定義するもの：**データ契約（§2）／フレームポリシー（§3）／検証規則（§4）／
+    API（§5）／アダプタ規約（§6）／参照アダプタ（§7）／較正と決定性（§8）／監査（§9）**。
+*   本仕様が定義しないもの：Core の力学（Core 本書）、UI、永続化方式。
+
+```
+ RawEvent ──► [Adapter] ──► Observation ──► [Validator] ──► [Core v3.2.2 step] ──► Audit
+ (テキスト/センサ/         （本仕様 §2 の正規形）    （§4）           （Core §7.3）      （Core §14）
+  ゲームイベント...)
+```
+
+***
+
+## 1. 設計原則
+
+1.  **観測は証拠、判定は Core**。観測層は v/Δ の観測値と確信度、Zero 徴候、EF 情報を供給する。
+    A/B/C の State を**供給してはならない**（MUST NOT）。State は Core §8.0/§8.1 が判定する。
+2.  **欠測は正常系**。観測できないチャネルは**省略**する（0 で埋めない。0 は「観測の結果ゼロだった」
+    という積極的主張である）。Core は欠測を carry＋減衰で処理する（Core §2.8）。
+3.  **決定性**。同一入力・同一設定に対して同一の `Observation` を返す（MUST｜§8）。
+4.  **監査可能性**。すべての数値に根拠（`evidence`）を添付できる構造を持つ（SHOULD）。
+
+***
+
+## 2. データ契約（正規形）
+
+### 2.1 型定義（TypeScript 表記｜正規）
+
+```typescript
+/** 観測層 → Core への入力。1フレームにつき1つ。 */
+interface Observation {
+  schema_version: "1.0.0";
+  session_id: string;
+  frame: FrameHeader;
+  channels?: {              // A/B/C の観測（欠測チャネルは省略）
+    A?: ChannelObs;
+    B?: ChannelObs;
+    C?: ChannelObs;
+  };
+  ef?: {                    // 外的要因の観測（欠測チャネルは省略）
+    E0?: EfObs;             // Health
+    E1?: EfObs;             // 環境
+    E2?: EfObs;             // 社会
+    E3?: EfObs;             // ノイズ
+  };
+  zero?: ZeroObs;           // Zero 徴候（省略時 w_zero_int=0 扱い）
+  subtype?: SubtypeObs;     // 推定層情報（力学に非介入｜省略可）
+  obs_explain?: Evidence[]; // 監査用（§9）
+}
+
+interface FrameHeader {
+  t: number;                // 0起点の単調増加整数（MUST）
+  policy: "event" | "interval" | "hybrid";
+  wall_time?: string;       // ISO 8601（SHOULD）
+  dt_ms?: number;           // 前フレームからの実時間（policy=interval/hybrid で MUST）
+  idempotency_key?: string; // 再送安全化（§5.4）
+}
+
+interface ChannelObs {
+  v?: number;               // [0,2] 0.1刻み。省略=vの観測なし
+  delta?: number;           // [0,2] 0.1刻み。省略=Coreがvジャンプから導出（Core §2.8.3）
+  confidence: number;       // [0,1]。θ_conf(0.3)未満はCoreが欠測扱い（MUST 供給）
+  evidence?: string[];      // 根拠の短文（SHOULD）
+}
+
+interface EfObs extends ChannelObs {
+  state_prop?: "Normal" | "Runaway" | "Zero";  // EFのみ提案可（Core §2.8.4）
+}
+
+interface ZeroObs {
+  w_zero_int: number;       // [0,5]（Core §8.1 契約：単調・観測窓明示）
+  window: string;           // 観測窓の宣言（例 "last_3_turns"）
+  signals?: ZeroSignal[];   // 徴候内訳（SHOULD｜Core 付録A.3 準拠）
+  ext_flags?: {             // w_zero_ext の材料（Core が加重）
+    E0?: boolean;           // 体調悪化により駆動不能
+    E1?: boolean;           // 外界情報遮断
+    E2?: boolean;           // 社会的断絶／評価データ不能
+    E3?: boolean;           // ノイズ誘導により入力不能
+  };
+}
+
+interface ZeroSignal {
+  id: number; name: string; fired: boolean; weight: number;
+}
+
+interface SubtypeObs {
+  wB?: [number, number];                    // Σ=1
+  wC?: [number, number, number, number];    // Σ=1
+  conf?: number;                            // [0,1]
+}
+
+interface Evidence {
+  channel: "A" | "B" | "C" | "E0" | "E1" | "E2" | "E3" | "zero";
+  quote?: string;           // 元テキストの抜粋・イベント名等
+  rule?: string;            // 適用したルーブリック/ルールのID
+  contribution?: number;    // このevidenceの寄与
+}
+```
+
+### 2.2 Core からの出力（参考）
+
+`step()` の戻り値は Core §14 の `audit` オブジェクト。観測層仕様としては
+`r_explain.r_cont`（連続値）と `RuinScore`（表示用）の両方が含まれることのみ要求する（MUST）。
+
+### 2.3 値の規約
+
+| 項目 | 規約 |
+| --- | --- |
+| `v` / `delta` | `[0, 2]`、**0.1 刻みに量子化**（MUST｜ジッタ抑制と決定性のため） |
+| `confidence` | `[0, 1]`。意味論は §6.3（較正された確率であること） |
+| 欠測 | フィールド省略で表現（MUST）。`null`・`0` 埋めは禁止 |
+| `w_zero_int` | `[0, 5]`、徴候に対して単調非減少（MUST） |
+| `wB` / `wC` | 各要素 `[0,1]`、合計 1±0.001（MUST） |
+| 文字列 | UTF-8。`evidence.quote` は 200 文字以内（SHOULD） |
+
+***
+
+## 3. フレームポリシー
+
+観測層はセッション作成時に `frame_policy` を宣言する（MUST）。**セッション途中の変更は不可**。
+
+### 3.1 `event`（イベント駆動｜対話向け既定）
+
+*   **1フレーム ＝ 1観測イベント**（対話なら1往復、日記アプリなら1投稿）。
+*   イベントが無い間、Core の時間は進まない（減衰も進まない）。
+*   長い空白後の再開で減衰が効かない点に注意 → 空白が意味を持つドメインでは `hybrid` を使う。
+
+### 3.2 `interval`（固定周期｜センサ向け）
+
+*   **1フレーム ＝ 固定 `dt_ms`**。観測が無い周期も **`Observation` を省略して step を呼ぶ**
+    （欠測フレーム｜Core §2.8 の減衰が働く）。
+*   `dt_ms` はセッション定数（MUST）。
+
+### 3.3 `hybrid`（イベント＋ハートビート）
+
+*   イベントでフレームを進め、加えて `max_silence_ms` を超える無音で**欠測フレームを自動挿入**する。
+*   対話×長期運用の推奨ポリシー（放置中に EF・Δ が自然減衰する）。
+
+### 3.4 融合係数との関係（規範）
+
+Core の `λ_v`（既定 0.6）は **event ポリシー（1フレーム＝1往復程度）を想定**した値である。
+`interval` で dt が小さい場合、観測層は `λ_v` を下方修正して Core に設定すること（SHOULD）：
+
+```
+λ_v(dt) = 1 − (1 − 0.6)^(dt / dt_ref)     dt_ref = 代表イベント間隔（例：対話1往復 ≒ 60s）
+```
+
+***
+
+## 4. 検証規則（Validator）
+
+Core の step 前に以下を検証する。**違反は Observation 全体を拒否**する（部分受理しない）。
+
+| # | 検証 | 違反時 |
+| --- | --- | --- |
+| V1 | スキーマ適合（未知フィールドは拒否：`additionalProperties: false`） | `400 SCHEMA_VIOLATION` |
+| V2 | 値域（§2.3 の表） | `422 RANGE_VIOLATION`（違反フィールド・値・許容域を返す） |
+| V3 | `frame.t` の単調性（前回 +1 のみ受理） | `409 FRAME_ORDER`（期待値を返す） |
+| V4 | `idempotency_key` 重複（同一キー＝前回結果を再返却、副作用なし） | `200`（再生） |
+| V5 | `schema_version` 互換（メジャー不一致は拒否） | `426 VERSION_MISMATCH` |
+| V6 | `wB`/`wC` の合計 1±0.001 | `422` |
+| V7 | `policy=interval/hybrid` で `dt_ms` 必須 | `400` |
+
+**量子化**：`v`/`delta` が 0.1 刻みでない場合、Validator は**拒否ではなく丸めてよい**（MAY）。
+丸めた場合は audit の `notes` に記録する（MUST）。
+
+***
+
+## 5. API 仕様
+
+ライブラリ組込み（in-process）を一次形態、REST を参照バインディングとする。**意味論は同一**。
+
+### 5.1 ライブラリ API（正規）
+
+```typescript
+interface AbcEngine {
+  /** セッション生成。configはイミュータブル。 */
+  createSession(config: SessionConfig): SessionId;
+
+  /** 1フレーム進める。observation省略=欠測フレーム。戻り値はCore §14 audit。 */
+  step(session: SessionId, observation?: Observation): Audit;
+
+  /** アダプタ単体実行（stepしない）。デバッグ・較正用。 */
+  observe(session: SessionId, raw: RawEvent): Observation;
+
+  /** observe + step の合成（本番の主経路）。 */
+  stepRaw(session: SessionId, raw: RawEvent): Audit;
+
+  /** carry状態のスナップショット（読み取り専用）。 */
+  getState(session: SessionId): CarryState;
+
+  /** 状態リセット（t=0へ）。監査ログは保持。 */
+  reset(session: SessionId): void;
+
+  close(session: SessionId): void;
+}
+
+interface SessionConfig {
+  profile: "production" | "analysis";   // Core §5.2 の β/ζ 切替
+  frame_policy: "event" | "interval" | "hybrid";
+  dt_ms?: number;                        // interval/hybrid
+  max_silence_ms?: number;               // hybrid
+  adapter: string;                       // 使用アダプタID（§7）
+  adapter_config?: object;               // アダプタ固有設定（モデルID等）
+  overrides?: Partial<CoreParams>;       // Core §13 既定の上書き（範囲検証必須）
+}
+```
+
+### 5.2 REST バインディング（参照）
+
+| メソッド | パス | 説明 | 成功 |
+| --- | --- | --- | --- |
+| POST | `/v1/sessions` | セッション作成（body=`SessionConfig`） | `201 {session_id, core_version, schema_version}` |
+| POST | `/v1/sessions/{id}/frames` | 1フレーム実行（body=`Observation`、空body=欠測フレーム） | `200 {audit}` |
+| POST | `/v1/sessions/{id}/frames:raw` | RawEvent を受け取り observe+step | `200 {audit, observation}` |
+| POST | `/v1/sessions/{id}/observe` | アダプタ単体実行（副作用なし） | `200 {observation}` |
+| GET | `/v1/sessions/{id}/state` | carry 状態の取得 | `200 {carry_state}` |
+| GET | `/v1/sessions/{id}/frames/{t}` | 過去フレームの audit 再取得 | `200 {audit}` |
+| POST | `/v1/sessions/{id}:reset` | リセット | `204` |
+| DELETE | `/v1/sessions/{id}` | セッション破棄 | `204` |
+
+### 5.3 エラー応答（共通形式）
+
+```json
+{
+  "error": {
+    "code": "RANGE_VIOLATION",
+    "http": 422,
+    "message": "channels.B.v = 2.3 exceeds [0, 2]",
+    "field": "channels.B.v",
+    "expected": "[0, 2] step 0.1",
+    "frame_t": 12
+  }
+}
+```
+
+| HTTP | code | 意味 |
+| --- | --- | --- |
+| 400 | `SCHEMA_VIOLATION` | スキーマ不適合・未知フィールド |
+| 404 | `SESSION_NOT_FOUND` | セッション不存在 |
+| 409 | `FRAME_ORDER` | `t` の不整合（期待 t を `expected` に返す） |
+| 410 | `SESSION_CLOSED` | 破棄済みセッション |
+| 422 | `RANGE_VIOLATION` | 値域違反 |
+| 426 | `VERSION_MISMATCH` | schema_version 非互換 |
+| 429 | `RATE_LIMITED` | 流量制限 |
+| 500 | `ADAPTER_ERROR` | アダプタ内部失敗（LLM タイムアウト等。**Core 状態は不変**） |
+
+**保証**：エラー時、Core の carry 状態は一切変化しない（MUST｜step は全域アトミック）。
+
+### 5.4 冪等性・並行性
+
+*   `idempotency_key` 付き step の再送は、**同一フレームの前回結果を再返却**する（副作用なし）。
+*   同一セッションへの並行 step は**直列化**される（MUST）。順序は `t` が決める。
+*   セッションは単一の時系列を表す。並行実験は別セッションを作る。
+
+***
+
+## 6. アダプタ規約
+
+アダプタは `RawEvent → Observation` の純関数（+設定）である。
+
+### 6.1 MUST
+
+*   同一の `(RawEvent, adapter_config)` に対して**同一の Observation** を返す（決定性｜§8）。
+*   観測できないチャネルを**省略**する（推測で埋めない）。
+*   `confidence` を必ず付す。根拠のない場合は低い値を付す（省略や 1.0 固定は不可）。
+*   `delta` を自前供給するか Core 導出（省略）に任せるかを**アダプタ宣言**で固定する
+    （`delta_source: "adapter" | "core_derived"`。フレームごとに切り替えない）。
+*   A/B/C の State に相当する情報を出力しない（`state_prop` は EF のみ）。
+
+### 6.2 SHOULD
+
+*   `evidence` を数値ごとに付す（監査・較正・デバッグの基盤）。
+*   処理時間の目標を宣言する（対話なら p95 < 2s 等）。
+*   入力が空・極端に短い場合は**全チャネル欠測**の Observation を返す（無理にスコアしない）。
+
+### 6.3 confidence の意味論（較正）
+
+`confidence = c` は「**真値との誤差が ±0.3 以内である確率がおよそ c**」を意味する（較正セット §8 で検証）。
+
+*   `c < 0.3`：Core が欠測扱い（Core §2.8.3 `θ_conf`）。「出したが使われない」領域。
+*   逆に、**使わせたくない推測値は c を下げて出すのではなく、チャネルごと省略する**こと。
+
+***
+
+## 7. 参照アダプタ
+
+### 7.1 DialogueAdapter（LLM スコアリング｜対話ドメイン）
+
+**入力**：直近 3 往復のテキスト（Core 付録 A.1 の窓と一致させる）
+**出力**：channels.A/B/C、zero、（可能なら）ef.E2/E3、subtype
+**delta_source**: `"core_derived"` を既定とする（LLM に時間差分を推定させない。
+v の履歴差分から Core が導出する方が安定するため）。
+
+**LLM 呼び出し契約（MUST）**：
+
+*   `temperature=0`、JSON Schema 強制出力（本仕様 §2.1 の `Observation` 部分集合）
+*   モデル ID・プロンプトバージョンを `adapter_config` に固定し、audit に記録
+*   タイムアウト時は `ADAPTER_ERROR`（欠測フレームとして step する選択はアプリ側の方針）
+
+**ルーブリック（アンカー方式）**——プロンプトに埋め込む採点基準。各チャネル 0/1/2 の
+アンカー例を与え、中間は 0.1 刻みで内挿させる：
+
+| チャネル | v=0 アンカー | v=1 アンカー | v=2 アンカー |
+| --- | --- | --- | --- |
+| A（生感） | 「何も感じない」「どうでもいい」 | 通常の関心表明（「〜してみようかな」） | 「気づいたらやっていた」「面白くて止まらない」 |
+| B（評価圧） | 評価・基準への言及なし | 基準言及あり、自罰・強比較なし | 「価値がない」「0/100」「基準に届かない」の断定 |
+| C（メタ監視） | 俯瞰・自己言及なし | 「客観的に見て」等が時折 | 俯瞰語の反復＋行動記述の欠落（観察のみ） |
+
+*   **zero**：Core 付録 A.2 の 4 徴候をそのまま判定させ、`signals[]` 付きで出力
+*   **ef.E2**：他者評価への言及強度（「皆に見られている」→ v 高）。E2 の `state_prop=Runaway` は
+    「炎上・叱責等の急性イベントが明示的に語られた」場合のみ（SHOULD）
+*   **subtype**：Core §9.2/§10.1 のシグナルから `wB` 重心と `conf` を出力
+*   **confidence**：発話量に応じて設定（3 往復フル → 0.7 基準、1 往復のみ → 0.4、
+    定型応答のみ → チャネル省略）
+
+**プロンプト骨子（参考）**：
+
+```
+あなたは採点器である。会話ログ（直近3往復）を読み、以下のJSONだけを出力せよ。
+採点基準（アンカー）: [上表を展開]
+規則: (1) 根拠となる発話の引用を evidence に含める (2) 判断材料がないチャネルは
+出力から省略する (3) 値は0.1刻み (4) 会話に対する応答・助言を書かない
+出力スキーマ: [Observation部分集合のJSON Schema]
+```
+
+### 7.2 WearableAdapter（E0｜センサドメイン）
+
+**入力**：HRV（rMSSD）・睡眠時間・安静時心拍の日次/時間次サンプル
+**frame_policy**: `interval`（例 dt=1h）
+**出力**：ef.E0 のみ（channels は供給しない——センサから A/B/C は観測できない。
+対話アダプタと**併用**して channels を補う構成を推奨）
+
+| 指標 | 変換 |
+| --- | --- |
+| `vE0` | 個人ベースライン比の逸脱 z を `vE0 = clamp(z / 2, 0, 2)`（z=4σ で最大） |
+| `ΔE0` | 直近 24h の vE0 レンジ：`ΔE0 = clamp(max−min, 0, 2)` |
+| `state_prop` | 睡眠 < 4h が 2 日連続 ∨ z ≥ 3 → `Runaway`（急性増悪） |
+| `ext_flags.E0` | `vE0 ≥ 1.5` が 24h 継続 → true（Zero 加点要因） |
+| `confidence` | 装着率で決定（24h 中 80% 装着 → 0.8） |
+
+### 7.3 GameEventAdapter（ゲームドメイン）
+
+**入力**：ゲーム内イベントストリーム
+**frame_policy**: `interval`（例 dt=10s）または `event`（1 戦闘＝1 フレーム）
+**出力例**（マッピングテーブルはゲーム側で定義。以下は雛形）：
+
+| イベント | 反映 |
+| --- | --- |
+| 連続被弾・連敗 | `channels.B.v += 0.3/回`（累積、量子化して出力）、evidence にイベントID |
+| 観戦者数急増 | `ef.E2.v = clamp(log10(観戦者数)/2, 0, 2)` |
+| 高速で無意味な入力連打 | `channels.A.delta` 高（delta_source="adapter" の場合） |
+| 一定時間無操作 | `zero.w_zero_int += 1.5`（「次の一言の連続不成立」相当） |
+
+***
+
+## 8. 較正・決定性・回帰
+
+### 8.1 アンカーテストベクタ（必須）
+
+アダプタは**各チャネル 20 件以上**のテストベクタ（入力＋期待 Observation）を保持する（MUST）。
+
+*   合格基準：`|v_out − v_expected| ≤ 0.2`（全件）、confidence の較正誤差 ≤ 0.15（ビン平均）
+*   CI で全件回帰（アダプタ・プロンプト・モデル ID のいずれかが変わったら再実行）
+
+### 8.2 決定性の検証
+
+同一入力 10 回で **Observation が完全一致**すること（LLM アダプタは temperature=0＋
+スキーマ強制で担保。満たせないモデルは、3 回サンプルの**中央値＋一致率→confidence** に
+フォールバックしてよい（MAY）。その場合フォールバック使用を audit に記録）。
+
+### 8.3 ドリフト監視（運用）
+
+*   母集団統計（チャネル別 v の週次分布）を監視し、平均 ±0.3 のシフトでアラート（SHOULD）。
+*   LLM モデル更新時は §8.1 の全件回帰を通過するまで本番投入しない（MUST）。
+
+### 8.4 Core との結合検証
+
+Core 側の適合性は **時系列テストベクタ**（観測列 → 期待 audit 列）で検証する。
+最小セット：
+
+1.  静穏 5 フレーム → R0 維持、TR 発火なし
+2.  社会圧上昇 → B Runaway entry（§8.0）→ TR-1 → Zero → ZeroLock → 回復、の 10 フレーム
+3.  全欠測 5 フレーム → EF 減衰・Δ 減衰のみ進行
+4.  境界値（v=1.5, 1.6, 1.3 前後）でのヒステリシス往復
+
+### 8.5 プロダクト運用の推奨閾値
+
+*   アラート発火は **`r_cont` の移動平均（3 フレーム）** に対して行う（単発スパイク対策）。
+*   R2 以上の通知には `r_explain.top_source` と `forced` を必ず添える（説明可能性）。
+*   RuinScore は**スクリーニング指標であり診断ではない**。R2/R3 の定常化はモデル外への
+    エスカレーション（人間・専門窓口）を設計すること（メンタルヘルス用途では MUST）。
+
+***
+
+## 9. 監査（obs_explain）
+
+観測層は自らの変換根拠を `obs_explain` として Observation に同梱する（SHOULD）。
+Core の audit（Core §14）と合わせ、**RawEvent → 数値 → 状態 → スコア** の全鎖が追跡可能になる。
+
+```json
+{
+  "obs_explain": [
+    { "channel": "B", "quote": "周りはできてるのに自分だけ...", "rule": "B2-anchor-v2", "contribution": 1.8 },
+    { "channel": "zero", "rule": "forced_choice_no_answer", "contribution": 1.5 }
+  ]
+}
+```
+
+トレース ID：REST では `X-Trace-Id` ヘッダを全応答に付与し、audit の `notes` に記録する（SHOULD）。
+
+***
+
+## 10. 適合性チェックリスト
+
+実装が本仕様に適合すると主張するための最小条件：
+
+*   [ ] §2.1 の型に適合した Observation を生成する
+*   [ ] A/B/C の State を出力しない（`state_prop` は EF のみ）
+*   [ ] 欠測をフィールド省略で表現する（0 埋め・null 埋めをしない）
+*   [ ] v/delta が 0.1 刻み・値域内
+*   [ ] confidence を全チャネルに付し、較正検証（§8.1）を通過
+*   [ ] frame_policy を宣言し、t の単調性を守る
+*   [ ] 決定性検証（§8.2）を通過
+*   [ ] エラー時に Core 状態を変化させない
+*   [ ] アンカーテストベクタ 20 件/チャネル以上を保持し CI で回帰
+*   [ ] 時系列テストベクタ（§8.4 の 4 本）を通過
+
+***
+
+## 付録X：サンプルシーケンス（event ポリシー・対話 3 フレーム）
+
+```json
+// t=0: 初回発話「新しい仕事、ちょっと楽しみです」
+{ "schema_version": "1.0.0", "session_id": "s-001",
+  "frame": { "t": 0, "policy": "event" },
+  "channels": {
+    "A": { "v": 1.3, "confidence": 0.6, "evidence": ["楽しみです"] },
+    "B": { "v": 0.4, "confidence": 0.5 }
+  },
+  "zero": { "w_zero_int": 0, "window": "last_3_turns" } }
+
+// t=1: 「先輩たちがすごすぎて、自分だけ足を引っ張ってる気がします」
+{ "schema_version": "1.0.0", "session_id": "s-001",
+  "frame": { "t": 1, "policy": "event" },
+  "channels": {
+    "A": { "v": 0.8, "confidence": 0.6 },
+    "B": { "v": 1.5, "confidence": 0.8, "evidence": ["自分だけ足を引っ張ってる"] },
+    "C": { "v": 1.2, "confidence": 0.5, "evidence": ["〜な気がします(自己監視)"] }
+  },
+  "ef": { "E2": { "v": 1.2, "confidence": 0.6, "evidence": ["先輩たちがすごすぎて"] } },
+  "zero": { "w_zero_int": 0, "window": "last_3_turns" },
+  "subtype": { "wB": [0.2, 0.8], "conf": 0.7 } }
+
+// t=2: 「…」（短い相槌のみ。実質無応答）
+{ "schema_version": "1.0.0", "session_id": "s-001",
+  "frame": { "t": 2, "policy": "event" },
+  "zero": { "w_zero_int": 1.5, "window": "last_3_turns",
+            "signals": [ { "id": 1, "name": "no_next_utterance", "fired": true, "weight": 1.5 } ] } }
+  // channels 全省略 = 欠測（Core は carry + 減衰で処理）
+```
+
+***
+
+## 付録Y：変更履歴
+
+*   **v1.0.0**（初版）：Core v3.2.2 §2.8/§8.0/§8.1 の観測契約に対応。
+    Core v3.2.1 レビューで特定された「観測層の不在」（v/Δ/State 生成規則・フレーム定義・
+    持ち越し・Runaway 判定の欠落）のうち、観測側の責務を本書で定義した。
